@@ -26,9 +26,8 @@ const STUDIO_TILES = [
 ];
 
 export default function Dashboard() {
-  const { user, tick, balance } = useApp();
+  const { user, tick } = useApp();
   const nav = useNavigate();
-
   const data = useMemo(() => {
     try {
       const all = api.listGenerations({ pageSize: 1000 }).items;
@@ -73,7 +72,7 @@ export default function Dashboard() {
           </div>
           {data.recent.length === 0 ? (
             <EmptyState icon={<Sparkles size={22} />} title="Nothing generated yet"
-              body="Pollinations (free, no key) is pre-connected — images aur text turant chalenge. Video ke liye AI Engine Setup ya Providers me se ek free engine connect karo (HF, Replicate, Luma, NIM), ya apna Ollama jodo."
+              body="Pollinations (free, no key) is pre-connected — images aur text turant chalenge. Video ke liye AI Engine Setup ya Providers me ek free engine connect karo (HF, Replicate, Luma, NIM), ya apna Ollama jodo."
               action={<Link to="/create/image"><Button>Create your first image <ArrowRight size={14} /></Button></Link>} />
           ) : (
             <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
@@ -86,9 +85,7 @@ export default function Dashboard() {
                   </div>
                   <div className="p-3">
                     <div className="truncate text-[12px] font-semibold text-ink-200">{g.prompt}</div>
-                    <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-ink-500">
-                      {taskIcon(g.type, 11)} {g.type} · {timeAgo(g.createdAt)}
-                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-ink-500">{taskIcon(g.type, 11)} {g.type} · {timeAgo(g.createdAt)}</div>
                   </div>
                 </button>
               ))}
@@ -99,11 +96,9 @@ export default function Dashboard() {
         <section>
           <h2 className="font-display mb-3 text-[16.5px] font-bold text-ink-50">Quick create</h2>
           <div className="space-y-3">
-            {STUDIO_TILES.map((t, i) => (
-              <Link key={t.to} to={t.to} className="panel group relative flex items-center gap-4 overflow-hidden p-4 transition-all hover:-translate-y-0.5 hover:border-solar-500/40" style={{ animationDelay: `${i * 0.05}s` }}>
-                <div className="absolute inset-y-0 right-0 w-32 opacity-25 transition-opacity group-hover:opacity-45">
-                  <GenArt seed={t.seed} words={t.seed} className="h-full w-full" />
-                </div>
+            {STUDIO_TILES.map((t) => (
+              <Link key={t.to} to={t.to} className="panel group relative flex items-center gap-4 overflow-hidden p-4 transition-all hover:-translate-y-0.5 hover:border-solar-500/40">
+                <div className="absolute inset-y-0 right-0 w-32 opacity-25 transition-opacity group-hover:opacity-45"><GenArt seed={t.seed} words={t.seed} className="h-full w-full" /></div>
                 <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-solar-500/30 bg-solar-400/10 text-solar-300"><t.icon size={19} /></div>
                 <div className="relative">
                   <div className="text-[14px] font-bold text-ink-50">{t.title}</div>

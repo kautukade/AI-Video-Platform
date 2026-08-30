@@ -1,113 +1,98 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Clapperboard, Coins, Download, ExternalLink, Film, Image as ImageIcon, Infinity as InfinityIcon, Plug, RefreshCw, Trash2, XCircle } from "lucide-react";
-import { Asset, Generation, TaskType } from "../lib/types";
+import { Link } from "react-router-dom";
+import {
+  AlertTriangle, CheckCircle2, Clapperboard, Coins, Download, ExternalLink, Film, Image as ImageIcon,
+  Infinity as InfinityIcon, Plug, RefreshCw, Sparkles, Trash2, XCircle, Zap,
+} from "lucide-react";
 import { api } from "../server/api";
-import { capabilityForTask } from "../server/ai/router";
-import { useApp, useLiveGenerations } from "../state/store";
-import { downloadBlob, downloadUrl, fmtNum } from "../lib/utils";
-import { blobStore, getAdminSettings } from "../server/db";
-import { Button, Field, InfoNote, Select, StageProgress, StatusBadge, Tag } from "./ui";
-import { providerDef } from "../server/ai/providers";
+import { useApp } from "../state/store";
+import { blobUrl } from "../server/db";
+import { Asset, Capability, Generation, TaskType } from "../lib/types";
+import { cn, downloadBlob, fmtNum, friendlyError, maskKey } from "../lib/utils";
+import { Button, InfoNote, Select, StageProgress, StatusBadge, Tag } from "./ui";
+import { GenArt } from "./gen-art";
 
-export const TASK_LABEL: Record<TaskType, string> = {
-  image: "AI Image", video: "AI Video", poster: "AI Poster", character: "Character Video", text: "Text", audio: "Audio",
-};
-export function taskIcon(t: TaskType, size = 18) {
-  if (t === "video") return <Film size={size} />;
-  if (t === "image" || t === "poster") return <ImageIcon size={size} />;
-  return <Clapperboard size={size} />;
+export const TASK_LABEL: Record<string, string> = { image: "Image", video: "Video", poster: "Poster", character: "Character", text: "Text", audio: "Audio" };
+export function taskIcon(type: string, size = 14) {
+  if (type === "video") return <Film size={size} />;
+  if (type === "character") return <Clapperboard size={size} />;
+  if (type === "poster") return <ImageIcon size={size} />;
+  return <ImageIcon size={size} />;
 }
 
-export function useGeneration(genId: string | null): Generation | null {
-  const { tick } = useApp();
-  useLiveGenerations();
-  return useMemo(() => {
-    if (!genId) return null;
-    try { return api.getGeneration(genId); } catch { return null; }
-  }, [genId, tick]);
+export function WorkspaceHeader({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="anim-fade-up mb-5">
+      <div className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-solar-400">ai creative studio</div>
+      <h1 className="font-display mt-1 text-[28px] font-bold tracking-tight text-ink-50">{title}</h1>
+      {sub && <p className="mt-1 text-[13.5px] text-ink-400">{sub}</p>}
+    </div>
+  );
 }
 
-export function useAsset(assetId: string | null | undefined): { asset: Asset | null; url: string | null } {
-  const { tick } = useApp();
-  const asset = useMemo(() => {
-    if (!assetId) return null;
-    try { return api.getAsset(assetId); } catch { return null; }
-  }, [assetId, tick]);
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let on = true;
-    if (!asset) { setUrl(null); return; }
-    api.assetUrl(asset).then((u) => on && setUrl(u));
-    return () => { on = false; };
-  }, [asset]);
-  return { asset, url };
+export function hasCapableProvider(task: TaskType): boolean {
+  try {
+    const conns = api.myConnections();
+    const registry = api.providerRegistry();
+    const cap: Capability = task === "image" || task === "poster" ? "image" : task === "video" || task === "character" ? "video" : task === "audio" ? "audio" : "text";
+    return conns.some((c) => {
+      const def = registry.find((p) => p.id === c.providerId);
+      return def?.capabilities.includes(cap);
+    });
+  } catch { return false; }
 }
 
 export function ProviderSelect({ task, value, onChange }: { task: TaskType; value: string; onChange: (v: string) => void }) {
   const { tick } = useApp();
   const options = useMemo(() => {
-    let conns: { providerId: string; label: string; status: string }[] = [];
-    try { conns = api.myConnections().map((c) => ({ providerId: c.providerId, label: c.label, status: c.status })); } catch { /* noop */ }
-    const simEnabled = getAdminSettings().mockEnabled;
-    const supportsSim = ["image", "video", "character", "text", "poster"].includes(task);
-    return { conns, simEnabled, supportsSim };
-  }, [task, tick]);
+    try {
+      const conns = api.myConnections();
+      const registry = api.providerRegistry();
+      const cap: Capability = task === "image" || task === "poster" ? "image" : task === "video" || task === "character" ? "video" : task === "audio" ? "audio" : "text";
+      const capable = conns.filter((c) => registry.find((p) => p.id === c.providerId)?.capabilities.includes(cap));
+      return capable.map((c) => ({ id: c.providerId, label: `${c.label}${c.providerId === "simulator" ? " (SIM)" : ""}` }));
+    } catch { return []; }
+  }, [tick, task]);
   return (
-    <Field label="AI Provider" hint={value === "auto" ? "best-fit routing" : undefined}>
+    <div>
+      <div className="mb-1.5 text-[11.5px] font-bold uppercase tracking-[0.08em] text-ink-300">AI Provider</div>
       <Select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="auto">Auto (ProviderRouter)</option>
-        {options.conns.map((c) => (
-          <option key={c.providerId} value={c.providerId}>
-            {c.label}{c.status === "error" ? " — unreachable" : ""} · {providerDef(c.providerId)?.billing}
-          </option>
-        ))}
-        {options.simEnabled && options.supportsSim && <option value="simulator">Local Simulator · dev mock · free</option>}
+        <option value="auto">Auto (best free engine)</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
       </Select>
-      {value === "auto" && <p className="mt-1.5 text-[11px] leading-snug text-ink-500">Routes by capability → best free engine → health. Paid fallback needs consent in Settings.</p>}
-    </Field>
+    </div>
   );
 }
 
 export function ModelSelect({ task, providerId, value, onChange }: { task: TaskType; providerId: string; value: string; onChange: (v: string) => void }) {
   const { tick } = useApp();
-  const cap = capabilityForTask(task);
   const models = useMemo(() => {
     try {
-      const all = api.listModels({ capability: cap });
-      if (providerId === "auto") return all;
-      return all.filter((m) => m.providerId === providerId);
+      if (providerId === "auto") return [];
+      const cap: Capability = task === "image" || task === "poster" ? "image" : task === "video" || task === "character" ? "video" : task === "audio" ? "audio" : "text";
+      return api.listModels({ providerId, capability: cap });
     } catch { return []; }
-  }, [cap, providerId, tick]);
-  useEffect(() => {
-    if (value && !models.some((m) => m.name === value)) onChange(models[0]?.name ?? "");
-    if (!value && models.length) onChange(models[0].name);
-  }, [models, value, onChange]);
+  }, [tick, providerId, task]);
+  const defModel = useMemo(() => {
+    try { return providerId !== "auto" ? api.defaultModelFor(providerId, task) : ""; } catch { return ""; }
+  }, [providerId, task]);
   return (
-    <Field label="AI Model" hint={`${models.length} compatible`}>
-      <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={!models.length}>
-        {models.length === 0 && <option value="">No {cap}-capable models — connect a provider</option>}
-        {models.map((m) => (
-          <option key={m.id} value={m.name}>{m.displayName} · {m.providerId}{m.pricingNote ? ` · ${m.pricingNote}` : ""}</option>
-        ))}
+    <div>
+      <div className="mb-1.5 text-[11.5px] font-bold uppercase tracking-[0.08em] text-ink-300">Model</div>
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{defModel ? `auto — ${defModel}` : "auto (recommended)"}</option>
+        {models.map((m) => <option key={m.id} value={m.name}>{m.displayName}</option>)}
       </Select>
-    </Field>
+    </div>
   );
 }
 
-export function CreditEstimate({ task, providerId, model, params, extraNote }: { task: TaskType; providerId: string; model: string; params: Record<string, any>; extraNote?: string }) {
-  const { tick } = useApp();
+export function CreditEstimate({ task, providerId, model, params }: { task: TaskType; providerId: string; model: string; params: Record<string, any> }) {
   const est = useMemo(() => {
-    try { return api.estimate({ type: task, providerId, model, params }); }
-    catch (e: any) { return { error: e?.message ?? "Connect a provider to estimate cost" }; }
-  }, [task, providerId, model, params, tick]);
+    try { return api.estimate({ type: task, providerId, model: model || null, params }); }
+    catch { return { credits: 0, rule: { base: 0, unit: "per_generation" as const, note: "" } }; }
+  }, [task, providerId, model, params]);
   const unlimited = useMemo(() => { try { return api.platformMode().unlimited; } catch { return true; } }, []);
-  if ("error" in est)
-    return (
-      <div className="rounded-[10px] border border-ink-700 bg-ink-800/60 px-4 py-3">
-        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-ink-400"><AlertTriangle size={14} className="text-solar-400" /> {(est as any).error}</div>
-      </div>
-    );
   if (unlimited || est.credits === 0)
     return (
       <div className="rounded-[10px] border border-jade-500/30 bg-jade-500/8 px-4 py-3">
@@ -115,8 +100,7 @@ export function CreditEstimate({ task, providerId, model, params, extraNote }: {
           <span className="text-[11.5px] font-bold uppercase tracking-wide text-ink-400">Cost</span>
           <span className="flex items-center gap-1.5 font-mono text-[15px] font-bold text-jade-300"><InfinityIcon size={16} /> FREE · unlimited</span>
         </div>
-        <div className="mt-1 text-[11px] leading-snug text-ink-500">Local build — no credit limits. Provider usage is free-tier unless you connect paid keys.</div>
-        {extraNote && <div className="mt-1.5 text-[11px] text-ink-500">{extraNote}</div>}
+        <div className="mt-1 text-[11px] leading-snug text-ink-500">Local build — no credit limits. Free-tier engines (Pollinations, Ollama, HF) unless you connect a paid key.</div>
       </div>
     );
   return (
@@ -125,199 +109,182 @@ export function CreditEstimate({ task, providerId, model, params, extraNote }: {
         <span className="text-[11.5px] font-bold uppercase tracking-wide text-ink-400">Estimated cost</span>
         <span className="flex items-center gap-1.5 font-mono text-[17px] font-bold text-solar-300"><Coins size={14} /> {fmtNum(est.credits)}</span>
       </div>
-      {extraNote && <div className="mt-1.5 text-[11px] text-ink-500">{extraNote}</div>}
+      <div className="mt-1 text-[11px] leading-snug text-ink-500">Reserved up-front; unused credits refund automatically.</div>
     </div>
   );
 }
 
-export function GenerationPreview({ genId, onDone, emptyHint }: { genId: string | null; onDone?: (g: Generation) => void; emptyHint: React.ReactNode }) {
-  const gen = useGeneration(genId);
-  const { asset, url } = useAsset(gen?.assetId);
-  const { toast } = useApp();
-  const nav = useNavigate();
-  const doneRef = React.useRef<string | null>(null);
+export function useAsset(assetId: string | null): { asset: Asset | null; url: string | null } {
+  const { tick } = useApp();
+  const asset = useMemo(() => {
+    if (!assetId) return null;
+    try { return api.getAsset(assetId); } catch { return null; }
+  }, [assetId, tick]);
+  const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (gen && gen.status === "completed" && doneRef.current !== gen.id) { doneRef.current = gen.id; onDone?.(gen); }
-  }, [gen, onDone]);
+    let alive = true;
+    setUrl(null);
+    if (asset) api.assetUrl(asset).then((u) => { if (alive) setUrl(u); });
+    return () => { alive = false; };
+  }, [asset]);
+  return { asset, url };
+}
+
+export function useGeneration(genId: string | null): Generation | null {
+  const { tick } = useApp();
+  return useMemo(() => {
+    if (!genId) return null;
+    try { return api.getGeneration(genId); } catch { return null; }
+  }, [genId, tick]);
+}
+
+export function GenerationPreview({ genId, emptyHint }: { genId: string | null; emptyHint: React.ReactNode }) {
+  const gen = useGeneration(genId);
+  const { asset, url } = useAsset(gen?.assetId ?? null);
+  const { toast } = useApp();
 
   if (!gen)
     return (
-      <div className="flex h-full min-h-[420px] flex-col items-center justify-center rounded-[14px] border border-dashed border-ink-600 bg-ink-900/40 p-8 text-center">
+      <div className="panel-flat anim-fade-in flex min-h-[420px] flex-col items-center justify-center p-8 text-center">
         {emptyHint}
       </div>
     );
+
   const active = ["queued", "preparing", "generating", "processing"].includes(gen.status);
   return (
-    <div className="panel-flat flex h-full min-h-[420px] flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-ink-700 px-4 py-3">
+    <div className="panel-flat anim-fade-in flex min-h-[420px] flex-col p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <StatusBadge status={gen.status} />
-        <span className="truncate font-mono text-[11px] text-ink-500">{gen.id.slice(0, 13)} · {gen.providerId ?? "routing"}/{gen.model ?? "…"}</span>
-        <span className="ml-auto flex items-center gap-1 font-mono text-[11.5px] text-jade-300"><Coins size={12} /> {api.platformMode().unlimited ? "free" : (gen.creditFinal ?? gen.creditEstimate)}</span>
+        <div className="flex items-center gap-2">
+          {gen.providerId && <Tag tone="ink">{gen.providerId}{gen.simulated ? " · SIM" : ""}</Tag>}
+          {gen.model && <Tag tone="ink" className="font-mono">{gen.model}</Tag>}
+        </div>
       </div>
-      <div className="flex flex-1 flex-col p-4">
-        {active && (
-          <div className="anim-fade-in flex flex-1 flex-col justify-center gap-5 px-2">
-            <div className="text-center">
-              <div className="font-display text-[18px] font-bold text-ink-50">
-                {gen.status === "queued" ? "In the queue…" : gen.status === "preparing" ? "Preparing your generation…" : gen.status === "generating" ? "Generating…" : "Processing output…"}
-              </div>
-              <p className="mt-1 text-[12.5px] text-ink-400">
-                {gen.providerId === "ollama" ? "Running locally — your data stays on this device." : `Using Cloud AI — sent to ${providerDef(gen.providerId ?? "")?.name ?? gen.providerId}.`} Status streams live, no invented percentages.
-              </p>
-            </div>
-            <StageProgress stages={gen.stages} status={gen.status} />
-            {gen.status === "queued" && (
-              <Button variant="outline" size="sm" className="self-center" onClick={async () => { try { await api.cancelGeneration(gen.id); toast("info", "Generation cancelled"); } catch (e: any) { toast("error", "Cannot cancel", e.message); } }}>Cancel</Button>
+
+      {active && (
+        <div className="flex flex-1 items-center justify-center"><div className="w-full max-w-md"><StageProgress stages={gen.stages} status={gen.status} /></div></div>
+      )}
+
+      {gen.status === "completed" && url && asset && (
+        <div className="flex flex-1 flex-col gap-4">
+          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-[12px] border border-ink-700 bg-ink-900">
+            {asset.kind === "video"
+              ? <video src={url} controls className="max-h-[52vh] w-auto rounded-[8px]" />
+              : <img src={url} alt={gen.prompt} className="max-h-[52vh] w-auto rounded-[8px] object-contain" />}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" icon={<Download size={13} />} onClick={async () => { try { await api.downloadAsset(asset); } catch { toast("error", "Download failed"); } }}>Download</Button>
+            <Button size="sm" variant="outline" icon={<RefreshCw size={13} />} onClick={async () => { try { await api.regenerate(gen.id); toast("info", "Regeneration queued"); } catch (e) { toast("error", "Regenerate failed", friendlyError(e).message); } }}>Regenerate</Button>
+            {asset.kind === "image" && (
+              <Button size="sm" variant="ghost" icon={<Clapperboard size={13} />} onClick={() => { sessionStorage.setItem("charImageAsset", asset.id); window.location.hash = "#/create/character"; }}>Use as character</Button>
             )}
+            <Link to="/library" className="ml-auto text-[12px] font-semibold text-solar-300 hover:underline">Saved to library →</Link>
           </div>
-        )}
-        {gen.status === "completed" && url && (
-          <div className="anim-fade-in flex flex-1 flex-col">
-            <div className="relative flex flex-1 items-center justify-center overflow-hidden rounded-[10px] bg-ink-950/70">
-              {asset?.kind === "video" || asset?.mime.startsWith("video")
-                ? <video src={url} controls className="max-h-[46vh] w-full object-contain" />
-                : <img src={url} alt={gen.prompt} className="max-h-[46vh] w-full object-contain" />}
-              {gen.simulated && <Tag tone="solar" className="absolute left-2.5 top-2.5">SIMULATED · DEV</Tag>}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" variant="subtle" icon={<Download size={13} />} onClick={async () => {
-                if (asset?.blobId) { const b = await blobStore.get(asset.blobId); if (b) downloadBlob(b, `${asset.name}.${asset.mime.includes("png") ? "png" : asset.mime.includes("webm") ? "webm" : asset.mime.split("/")[1] ?? "bin"}`); }
-                else if (url) downloadUrl(url, asset?.name ?? "result");
-              }}>Download</Button>
-              <Button size="sm" variant="outline" icon={<RefreshCw size={13} />} onClick={async () => { try { await api.regenerate(gen.id); toast("success", "Regenerating", "New job queued."); nav("/history"); } catch (e: any) { toast("error", "Regenerate failed", e.message); } }}>Regenerate</Button>
-              <Link to="/library"><Button size="sm" variant="outline" icon={<ExternalLink size={13} />}>Open Library</Button></Link>
-            </div>
+        </div>
+      )}
+
+      {gen.status === "failed" && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+          <XCircle size={34} className="text-coral-400" />
+          <div>
+            <div className="text-[15px] font-bold text-ink-100">Generation failed</div>
+            <p className="mt-1 max-w-sm text-[12.5px] leading-relaxed text-ink-400">{gen.error}</p>
           </div>
-        )}
-        {gen.status === "completed" && !url && <div className="flex flex-1 items-center justify-center text-[13px] text-ink-400">Done — open the result from your Library.</div>}
-        {(gen.status === "failed" || gen.status === "cancelled") && (
-          <div className="anim-fade-in flex flex-1 flex-col items-center justify-center gap-3 text-center">
-            {gen.status === "failed" ? <XCircle size={34} className="text-coral-400" /> : <AlertTriangle size={34} className="text-ink-400" />}
-            <div className="font-display text-[17px] font-bold text-ink-100">{gen.status === "failed" ? "Generation failed" : "Generation cancelled"}</div>
-            <p className="max-w-md text-[12.5px] leading-relaxed text-ink-400">{gen.error}</p>
-            <div className="w-full max-w-md text-left"><StageProgress stages={gen.stages} status={gen.status} /></div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" icon={<RefreshCw size={13} />} onClick={async () => { try { await api.regenerate(gen.id); toast("info", "Retrying…"); } catch (e) { toast("error", "Retry failed", friendlyError(e).message); } }}>Retry</Button>
+            <Link to="/providers"><Button size="sm" variant="ghost" icon={<Plug size={13} />}>Connect a provider</Button></Link>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {gen.status === "cancelled" && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <AlertTriangle size={30} className="text-ink-400" />
+          <p className="text-[13px] text-ink-400">Cancelled — reserved credits refunded.</p>
+        </div>
+      )}
     </div>
   );
 }
 
-export function WorkspaceHeader({ title, sub, children }: { title: string; sub: string; children?: React.ReactNode }) {
-  return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="font-display text-[24px] font-bold tracking-tight text-ink-50 sm:text-[27px]">{title}</h1>
-        <p className="mt-1 text-[13px] text-ink-400">{sub}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-export function DangerDelete({ onDelete, label = "Delete" }: { onDelete: () => void; label?: string }) {
-  return <Button size="sm" variant="danger" icon={<Trash2 size={13} />} onClick={onDelete}>{label}</Button>;
-}
-
-/** True when at least one connected provider can run this task. */
-export function hasCapableProvider(task: TaskType): boolean {
-  try {
-    const cap = capabilityForTask(task);
-    const connected = new Set(api.myConnections().map((c) => c.providerId));
-    return api.providerRegistry().some((p) => connected.has(p.id) && p.capabilities.includes(cap));
-  } catch { return false; }
-}
-
-/** Inline first-connect wizard shown when no provider can run the task. */
-const WIZARD_PROVIDERS: { id: string; why: string; keyHint: string }[] = [
-  { id: "huggingface", why: "Free-tier images, video, text & audio · works from the browser", keyHint: "hf_…" },
-  { id: "replicate", why: "Best free video quality — LTX, Wan 2.1, MiniMax, OmniHuman", keyHint: "r8_…" },
-  { id: "luma", why: "Cinematic text/image-to-video · free monthly quota", keyHint: "luma key" },
-  { id: "nvidia", why: "NIM free credits — LTX Video + Llama text", keyHint: "nvapi-…" },
-];
-
+/** Inline setup wizard shown in studios when no capable provider is connected. */
 export function CapabilitySetupWizard({ task }: { task: TaskType }) {
-  const { bump, toast } = useApp();
-  const [key, setKey] = useState<Record<string, string>>({});
+  const { toast, bump } = useApp();
   const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
-  const [ep, setEp] = useState("http://127.0.0.1:11434");
-  const label = TASK_LABEL[task] ?? task;
+  const [key, setKey] = useState("");
+  const [target, setTarget] = useState<string | null>(null);
+  const isVideo = task === "video" || task === "character";
 
-  const connect = async (pid: string) => {
+  const options = useMemo(() => {
+    const registry = api.providerRegistry();
+    const cap: Capability = isVideo ? "video" : task === "audio" ? "audio" : task === "text" ? "text" : "image";
+    return registry.filter((p) => p.capabilities.includes(cap) && p.id !== "simulator");
+  }, [task, isVideo]);
+
+  const connectNoKey = async (pid: string, name: string) => {
     setBusy(pid);
     try {
-      const def = api.providerRegistry().find((p) => p.id === pid)!;
-      const r = await api.connectProvider({
-        providerId: pid,
-        apiKey: key[pid]?.trim() || undefined,
-        endpoint: pid === "ollama" ? ep : undefined,
-      });
-      setResult((s) => ({ ...s, [pid]: { ok: true, msg: `${r.validation}${r.discovered ? ` · ${r.discovered} models discovered` : ""} — best free model auto-selected.` } }));
-      toast("success", `${def.name} connected`, "Free models will be used automatically.");
+      await api.connectProvider({ providerId: pid });
+      toast("success", `${name} connected`, "Free models auto-selected — generate now!");
       bump();
-    } catch (e: any) {
-      setResult((s) => ({ ...s, [pid]: { ok: false, msg: e?.message ?? "Connection failed." } }));
-    } finally { setBusy(null); }
+    } catch (e) { toast("error", "Connect failed", friendlyError(e).message); }
+    finally { setBusy(null); }
+  };
+
+  const connectKey = async (pid: string, name: string) => {
+    if (!key.trim()) { toast("warning", "API key required", `${name} ke liye free key paste karo.`); return; }
+    setBusy(pid);
+    try {
+      await api.connectProvider({ providerId: pid, apiKey: key.trim() });
+      toast("success", `${name} connected`, "Free models auto-selected — generate now!");
+      setKey(""); setTarget(null); bump();
+    } catch (e) { toast("error", "Connect failed", friendlyError(e).message); }
+    finally { setBusy(null); }
   };
 
   return (
-    <div className="anim-fade-up panel w-full max-w-xl p-6">
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-solar-500/40 bg-solar-400/10 text-solar-300"><Plug size={18} /></span>
+    <div className="anim-fade-up w-full max-w-2xl">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-solar-500/40 bg-solar-400/10 text-solar-300"><Sparkles size={22} /></span>
         <div>
-          <h3 className="font-display text-[18px] font-bold text-ink-50">Set up {label}</h3>
-          <p className="text-[12.5px] text-ink-400">Koi bhi ek free provider connect karo — system khud best free model chun lega.</p>
+          <h3 className="font-display text-[20px] font-bold text-ink-50">Set Up Your AI Studio</h3>
+          <p className="text-[12.5px] text-ink-400">Ek free {isVideo ? "video" : "image/text"} engine connect karo — sabke free tier hain, system best model khud chunega.</p>
         </div>
       </div>
-      <div className="mt-5 space-y-3">
-        {WIZARD_PROVIDERS.map((p) => {
-          const def = api.providerRegistry().find((x) => x.id === p.id);
-          const r = result[p.id];
+      <div className="grid gap-3 sm:grid-cols-2">
+        {options.map((p) => {
+          const noKey = p.auth === "none";
+          const expanded = target === p.id;
           return (
-            <div key={p.id} className="rounded-xl border border-ink-700 bg-ink-850/70 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[14px] font-bold text-ink-50">{def?.name}</span>
-                <Tag tone="jade">free tier</Tag>
-                <span className="ml-auto">
-                  {r?.ok ? <Tag tone="jade"><CheckCircle2 size={11} /> connected</Tag>
-                    : <Button size="sm" loading={busy === p.id} onClick={() => connect(p.id)}>
-                        {def?.auth === "none" ? "Connect" : "Login & Connect"}
-                      </Button>}
-                </span>
+            <div key={p.id} className="panel-flat flex flex-col p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[14px] font-bold text-ink-50">{p.name}</span>
+                <Tag tone={p.billing === "free" ? "jade" : "solar"}>{p.billing === "free" ? "no key" : "free tier"}</Tag>
               </div>
-              <p className="mt-1 text-[12px] text-ink-400">{p.why}</p>
-              {def && def.auth !== "none" && !r?.ok && (
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  <input type="password" value={key[p.id] ?? ""} onChange={(e) => setKey((s) => ({ ...s, [p.id]: e.target.value }))}
-                    placeholder={`API key (${p.keyHint}) — encrypted, never stored plain`}
-                    className="min-w-0 flex-1 rounded-[10px] border border-ink-600 bg-ink-800 px-3 py-2 text-[12.5px] text-ink-100 placeholder:text-ink-500 focus:border-solar-500/70" />
-                  <a href={def.docs} target="_blank" rel="noreferrer" className="flex items-center gap-1 self-center text-[11.5px] font-bold text-solar-300 hover:underline">
-                    Get free key <ExternalLink size={11} />
-                  </a>
-                </div>
-              )}
-              {r && (
-                <div className={`mt-2 text-[11.5px] font-semibold ${r.ok ? "text-jade-300" : "text-coral-300"}`}>{r.msg}</div>
-              )}
+              <p className="mt-1 flex-1 text-[11.5px] leading-snug text-ink-400">{p.tagline}</p>
+              <div className="mt-3 flex items-center gap-2">
+                {noKey ? (
+                  <Button size="sm" loading={busy === p.id} icon={<Zap size={12} />} onClick={() => connectNoKey(p.id, p.name)}>Connect</Button>
+                ) : expanded ? (
+                  <div className="flex w-full gap-1.5">
+                    <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="API key…"
+                      className="h-8 min-w-0 flex-1 rounded-lg border border-ink-600 bg-ink-800 px-2.5 text-[12px] text-ink-100 focus:border-solar-500/70" />
+                    <Button size="sm" loading={busy === p.id} onClick={() => connectKey(p.id, p.name)}>Go</Button>
+                  </div>
+                ) : (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => { setTarget(p.id); setKey(""); }}>Login</Button>
+                    <a href={p.docs} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] font-semibold text-solar-300 hover:underline">free key <ExternalLink size={10} /></a>
+                  </>
+                )}
+              </div>
             </div>
           );
         })}
-        <div className="rounded-xl border border-ink-700 bg-ink-850/70 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[14px] font-bold text-ink-50">Ollama (local · private)</span>
-            <Tag tone="jade">100% free</Tag>
-            <span className="ml-auto"><Button size="sm" variant="outline" loading={busy === "ollama"} onClick={() => connect("ollama")}>Detect & Connect</Button></span>
-          </div>
-          <p className="mt-1 text-[12px] text-ink-400">Text & vision only (video ke liye upar wale providers). Start: <span className="font-mono text-solar-300">ollama serve</span> with <span className="font-mono text-solar-300">OLLAMA_ORIGINS=*</span>, ya <span className="font-mono text-solar-300">node local-bridge.mjs</span>.</p>
-          <input value={ep} onChange={(e) => setEp(e.target.value)} placeholder="http://127.0.0.1:11434"
-            className="mt-2.5 w-full rounded-[10px] border border-ink-600 bg-ink-800 px-3 py-2 font-mono text-[12px] text-ink-100 focus:border-solar-500/70" />
-          {result.ollama && <div className={`mt-2 text-[11.5px] font-semibold ${result.ollama.ok ? "text-jade-300" : "text-coral-300"}`}>{result.ollama.msg}</div>}
-        </div>
-        <InfoNote tone="solar">
-          Real engines only — koi fake output nahi. Connect ke baad <strong>Generate</strong> dabao; system Auto mode me best available engine use karega aur fail hone pe agle provider pe fallback karega.
-        </InfoNote>
       </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-ink-500">
+        Keys AES-GCM encrypted hoti hain, kabhi log nahi hoti. Ya <Link to="/engine" className="font-semibold text-solar-300 hover:underline">AI Engine Setup</Link> me apna local Ollama jodo.
+      </p>
     </div>
   );
 }

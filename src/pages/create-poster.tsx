@@ -1,217 +1,141 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Frame, Save, Sparkles, Wand2 } from "lucide-react";
+import { Download, Frame, Wand2 } from "lucide-react";
 import { api } from "../server/api";
 import { useApp } from "../state/store";
-import { ASPECTS, downloadBlob, friendlyError, LANGUAGES } from "../lib/utils";
+import { friendlyError, LANGUAGES } from "../lib/utils";
 import { Button, Field, Input, InfoNote, Select, Textarea } from "../components/ui";
-import { useGeneration } from "../components/create-bits";
+import { CreditEstimate, WorkspaceHeader } from "../components/create-bits";
 
-const PRESETS: Record<string, { aspect: string; label: string }> = {
-  "Instagram Post": { aspect: "1:1", label: "1080×1080" },
-  "Instagram Story": { aspect: "9:16", label: "1080×1920" },
-  "YouTube Thumbnail": { aspect: "16:9", label: "1280×720" },
-  "Facebook Post": { aspect: "16:9", label: "1200×630" },
-  "LinkedIn Post": { aspect: "4:5", label: "1080×1350" },
-  "Event Poster": { aspect: "3:4", label: "1080×1440" },
-  "Business Poster": { aspect: "3:4", label: "1080×1440" },
-  "Product Poster": { aspect: "4:5", label: "1080×1350" },
-  "Festival Poster": { aspect: "3:4", label: "1080×1440" },
-  "Advertisement": { aspect: "16:9", label: "1920×1080" },
-};
-const STYLES = ["Cinematic", "Corporate", "Minimal", "Bold", "Festive", "Tech", "Elegant"];
+const PRESETS: { id: string; w: number; h: number }[] = [
+  { id: "Instagram Post", w: 1080, h: 1080 }, { id: "Instagram Story", w: 1080, h: 1920 },
+  { id: "YouTube Thumbnail", w: 1280, h: 720 }, { id: "YouTube Banner", w: 2560, h: 1440 },
+  { id: "Facebook Post", w: 1200, h: 630 }, { id: "LinkedIn Post", w: 1200, h: 627 },
+  { id: "Advertisement", w: 1080, h: 1350 }, { id: "Event Poster", w: 1080, h: 1620 },
+  { id: "Business Poster", w: 1080, h: 1440 }, { id: "Product Poster", w: 1080, h: 1350 },
+  { id: "Festival Poster", w: 1080, h: 1620 }, { id: "Educational Poster", w: 1080, h: 1440 },
+];
+const STYLES = ["Bold & Modern", "Minimal", "Corporate", "Festive", "Cinematic", "Gradient Pop", "Retro", "Elegant"];
 
 export default function CreatePoster() {
-  const { toast } = useApp();
+  const { toast, tick } = useApp();
+  const [title, setTitle] = useState("AI CREATIVE STUDIO");
+  const [subtitle, setSubtitle] = useState("Create. Generate. Imagine.");
+  const [desc, setDesc] = useState("");
+  const [cta, setCta] = useState("Start Free");
+  const [brand, setBrand] = useState("ITCyber");
   const [preset, setPreset] = useState("Instagram Post");
-  const [title, setTitle] = useState("Mega Tech Summit 2026");
-  const [subtitle, setSubtitle] = useState("AI · Cloud · Automation");
-  const [description, setDescription] = useState("");
-  const [cta, setCta] = useState("Register Now");
-  const [brand, setBrand] = useState("ITCyber Technologies");
-  const [color, setColor] = useState("#FFC14D");
-  const [style, setStyle] = useState("Bold");
-  const [language, setLanguage] = useState("en");
-  const [bgPrompt, setBgPrompt] = useState("");
-  const [bgUrl, setBgUrl] = useState<string | null>(null);
-  const [bgGenId, setBgGenId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [style, setStyle] = useState("Bold & Modern");
+  const [bgColor, setBgColor] = useState("#121722");
+  const [accent, setAccent] = useState("#ffc14d");
+  const [genId, setGenId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const bgGen = useGeneration(bgGenId);
 
-  const aspect = PRESETS[preset]?.aspect ?? "1:1";
-  const dims = ASPECTS[aspect] ?? ASPECTS["1:1"];
-  const W = Math.min(1080, dims.w), H = Math.round((W / dims.w) * dims.h);
+  const dims = useMemo(() => PRESETS.find((p) => p.id === preset) ?? PRESETS[0], [preset]);
 
-  // background image → pollinations (free, real)
+  // Render structured poster as real design data on canvas
   useEffect(() => {
-    if (bgGen?.status === "completed" && bgGen.assetId) {
-      api.getAsset(bgGen.assetId) && api.assetUrl(api.getAsset(bgGen.assetId)).then((u) => { if (u) { setBgUrl(u); toast("success", "AI background ready"); } });
-    }
-  }, [bgGen, toast]);
-
-  const genBackground = async () => {
-    if (!bgPrompt.trim()) { toast("warning", "Describe the background first"); return; }
-    try {
-      const gen = await api.createGeneration({ type: "image", prompt: `${bgPrompt}, ${style} style, poster background, no text, high quality`, params: { providerId: "auto", width: W, height: H, aspect } });
-      setBgGenId(gen.id);
-      toast("info", "Background generating", "Free engine engaged.");
-    } catch (e) { toast("error", "Background failed", friendlyError(e).message); }
-  };
-
-  const bgImg = useMemo(() => {
-    if (!bgUrl) return null;
-    const img = new Image();
-    img.src = bgUrl;
-    return img;
-  }, [bgUrl]);
-
-  const draw = () => {
     const c = canvasRef.current;
     if (!c) return;
-    c.width = W; c.height = H;
-    const ctx = c.getContext("2d")!;
-    // background
-    if (bgUrl && bgImg && bgImg.complete && bgImg.naturalWidth) {
-      ctx.drawImage(bgImg, 0, 0, W, H);
-      ctx.fillStyle = "rgba(10,13,19,0.55)";
-      ctx.fillRect(0, 0, W, H);
-    } else {
-      const g = ctx.createLinearGradient(0, 0, W, H);
-      g.addColorStop(0, "#121722");
-      g.addColorStop(1, "#0a0d13");
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = color + "33"; ctx.lineWidth = 2;
-      for (let i = 0; i < 8; i++) { ctx.beginPath(); ctx.arc(W * 0.85, H * 0.15, 40 + i * 46, 0, Math.PI * 2); ctx.stroke(); }
-    }
-    // accent bar
-    ctx.fillStyle = color;
-    ctx.fillRect(W * 0.07, H * 0.16, W * 0.09, 8);
-    // brand
-    ctx.fillStyle = "rgba(238,242,250,0.75)";
-    ctx.font = `700 ${Math.round(W * 0.028)}px "JetBrains Mono", monospace`;
-    ctx.textAlign = "left";
-    ctx.fillText(brand.toUpperCase(), W * 0.07, H * 0.13);
-    // title
+    c.width = dims.w; c.height = dims.h;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, dims.w, dims.h);
+    // accent shape
+    ctx.fillStyle = accent + "22";
+    ctx.beginPath();
+    ctx.arc(dims.w * 0.85, dims.h * 0.12, dims.w * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = accent + "14";
+    ctx.beginPath();
+    ctx.arc(dims.w * 0.1, dims.h * 0.9, dims.w * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = accent;
+    ctx.fillRect(dims.w * 0.08, dims.h * 0.3, dims.w * 0.12, 8);
+    const scaleF = dims.w / 1080;
     ctx.fillStyle = "#eef2fa";
-    ctx.font = `700 ${Math.round(W * 0.085)}px "Space Grotesk", sans-serif`;
-    wrapText(ctx, title.toUpperCase(), W * 0.07, H * 0.27, W * 0.86, W * 0.095);
-    // subtitle
-    ctx.fillStyle = color;
-    ctx.font = `600 ${Math.round(W * 0.035)}px "Manrope", sans-serif`;
-    ctx.fillText(subtitle, W * 0.07, H * 0.56);
-    // description
-    if (description.trim()) {
-      ctx.fillStyle = "rgba(217,224,239,0.8)";
-      ctx.font = `500 ${Math.round(W * 0.026)}px "Manrope", sans-serif`;
-      wrapText(ctx, description, W * 0.07, H * 0.62, W * 0.7, W * 0.036);
+    ctx.font = `800 ${Math.round(72 * scaleF)}px "Space Grotesk", sans-serif`;
+    wrapText(ctx, title.toUpperCase(), dims.w * 0.08, dims.h * 0.4, dims.w * 0.84, Math.round(78 * scaleF));
+    ctx.fillStyle = accent;
+    ctx.font = `700 ${Math.round(34 * scaleF)}px "Manrope", sans-serif`;
+    ctx.fillText(subtitle, dims.w * 0.08, dims.h * 0.62);
+    if (desc) {
+      ctx.fillStyle = "#b9c4da";
+      ctx.font = `500 ${Math.round(26 * scaleF)}px "Manrope", sans-serif`;
+      wrapText(ctx, desc, dims.w * 0.08, dims.h * 0.68, dims.w * 0.8, Math.round(34 * scaleF));
     }
-    // CTA pill
-    const ctaW = Math.max(W * 0.3, ctx.measureText(cta).width + W * 0.1);
-    roundRect(ctx, W * 0.07, H * 0.82, ctaW, H * 0.075, 14);
-    ctx.fillStyle = color; ctx.fill();
-    ctx.fillStyle = "#0a0d13";
-    ctx.font = `800 ${Math.round(W * 0.03)}px "Space Grotesk", sans-serif`;
-    ctx.textAlign = "center";
-    ctx.fillText(cta.toUpperCase(), W * 0.07 + ctaW / 2, H * 0.82 + H * 0.05);
-    ctx.textAlign = "left";
-    // language tag
-    ctx.fillStyle = "rgba(147,160,188,0.7)";
-    ctx.font = `600 ${Math.round(W * 0.02)}px "JetBrains Mono", monospace`;
-    ctx.fillText(`${(LANGUAGES.find((l) => l.id === language)?.label ?? "English").toUpperCase()} · ${style.toUpperCase()}`, W * 0.07, H * 0.95);
-  };
-
-  useEffect(() => {
-    const t = setTimeout(draw, bgUrl ? 250 : 30);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, subtitle, description, cta, brand, color, style, language, bgUrl, preset, W, H]);
-
-  const exportPng = async (save: boolean) => {
-    const c = canvasRef.current;
-    if (!c) return;
-    draw();
-    const blob: Blob = await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode"))), "image/png"));
-    if (save) {
-      setSaving(true);
-      try {
-        await api.savePoster(blob, { title, brand, preset, width: W, height: H });
-        toast("success", "Poster saved to Library");
-      } catch (e) { toast("error", "Save failed", friendlyError(e).message); }
-      finally { setSaving(false); }
-    } else {
-      downloadBlob(blob, `${(title || "poster").replace(/\s+/g, "-").toLowerCase()}.png`);
+    if (cta) {
+      const bw = dims.w * 0.3, bh = Math.round(70 * scaleF);
+      ctx.fillStyle = accent;
+      roundRect(ctx, dims.w * 0.08, dims.h * 0.85, bw, bh, 14 * scaleF);
+      ctx.fill();
+      ctx.fillStyle = "#0a0d13";
+      ctx.font = `800 ${Math.round(28 * scaleF)}px "Manrope", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(cta, dims.w * 0.08 + bw / 2, dims.h * 0.85 + bh / 2 + Math.round(10 * scaleF));
+      ctx.textAlign = "left";
     }
+    ctx.fillStyle = "#93a0bc";
+    ctx.font = `600 ${Math.round(22 * scaleF)}px "JetBrains Mono", monospace`;
+    ctx.fillText(brand, dims.w * 0.08, dims.h * 0.09);
+  }, [title, subtitle, desc, cta, brand, bgColor, accent, dims, tick]);
+
+  const generate = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const c = canvasRef.current!;
+      const blob: Blob = await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode"))), "image/png"));
+      const asset = await api.savePoster(blob, { title, subtitle, cta, brand, preset, width: dims.w, height: dims.h });
+      toast("success", "Poster saved to library", asset.name);
+      setGenId(asset.generationId);
+    } catch (e) { setErr(friendlyError(e).message); }
+    finally { setBusy(false); }
   };
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-display text-[24px] font-bold tracking-tight text-ink-50 sm:text-[27px]">AI Poster Studio</h1>
-          <p className="mt-1 text-[13px] text-ink-400">Structured design data — text is real, editable, export-ready. Backgrounds via free AI engines.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" icon={<Download size={14} />} onClick={() => exportPng(false)}>Download PNG</Button>
-          <Button icon={<Save size={14} />} loading={saving} onClick={() => exportPng(true)}>Save to Library</Button>
-        </div>
-      </div>
-      <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)_290px]">
+      <WorkspaceHeader title="AI Poster Studio" sub="Structured canvas editor — text real design data hai, image-rendered gibberish nahi." />
+      <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)_280px]">
         <div className="space-y-4">
-          <div className="panel-flat space-y-3.5 p-4">
-            <Field label="Preset"><Select value={preset} onChange={(e) => setPreset(e.target.value)}>{Object.entries(PRESETS).map(([k, v]) => <option key={k} value={k}>{k} · {v.label}</option>)}</Select></Field>
+          <div className="panel-flat space-y-4 p-4">
             <Field label="Poster Title"><Input value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
             <Field label="Subtitle"><Input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} /></Field>
-            <Field label="Description"><Textarea rows={2} className="min-h-[64px]" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
+            <Field label="Description"><Textarea rows={2} className="min-h-[64px]" value={desc} onChange={(e) => setDesc(e.target.value)} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="CTA"><Input value={cta} onChange={(e) => setCta(e.target.value)} /></Field>
               <Field label="Brand"><Input value={brand} onChange={(e) => setBrand(e.target.value)} /></Field>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Brand Color"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-10 w-full cursor-pointer rounded-[10px] border border-ink-600 bg-ink-800" /></Field>
-              <Field label="Style"><Select value={style} onChange={(e) => setStyle(e.target.value)}>{STYLES.map((s) => <option key={s}>{s}</option>)}</Select></Field>
-              <Field label="Language"><Select value={language} onChange={(e) => setLanguage(e.target.value)}>{LANGUAGES.slice(0, 6).map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}</Select></Field>
-            </div>
-            <Field label="Logo (optional)">
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { setLogoUrl(URL.createObjectURL(f)); toast("success", "Logo attached"); } }} />
-              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>{logoUrl ? "Change logo" : "Upload logo"}</Button>
-            </Field>
           </div>
-          <div className="panel-flat space-y-3 p-4">
-            <div className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[0.08em] text-ink-300"><Sparkles size={13} className="text-solar-400" /> AI Background</div>
-            <Field label="Describe the background">
-              <Input value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} placeholder="futuristic city skyline at night, golden lights…" />
-            </Field>
-            <Button variant="outline" size="sm" loading={!!bgGenId && !["completed", "failed"].includes(bgGen?.status ?? "completed")} icon={<Wand2 size={13} />} onClick={genBackground}>
-              Generate background (free)
-            </Button>
-            {bgGen?.status === "failed" && <InfoNote tone="coral">{bgGen.error}</InfoNote>}
-            {bgUrl && <img src={bgUrl} alt="bg" className="h-20 w-full rounded-lg border border-ink-700 object-cover" />}
+          <div className="panel-flat space-y-4 p-4">
+            <Field label="Preset"><Select value={preset} onChange={(e) => setPreset(e.target.value)}>{PRESETS.map((p) => <option key={p.id}>{p.id}</option>)}</Select></Field>
+            <Field label="Style"><Select value={style} onChange={(e) => setStyle(e.target.value)}>{STYLES.map((s) => <option key={s}>{s}</option>)}</Select></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Background"><input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-10 w-full cursor-pointer rounded-[10px] border border-ink-600 bg-ink-800" /></Field>
+              <Field label="Accent"><input type="color" value={accent} onChange={(e) => setAccent(e.target.value)} className="h-10 w-full cursor-pointer rounded-[10px] border border-ink-600 bg-ink-800" /></Field>
+            </div>
+            <p className="font-mono text-[11px] text-ink-500">{dims.w} × {dims.h}px · editable text</p>
           </div>
         </div>
 
-        <div className="panel-flat flex min-h-[420px] items-center justify-center p-5">
-          <div className="w-full max-w-[560px]">
-            <canvas ref={canvasRef} className="w-full rounded-[12px] border border-ink-700 shadow-2xl shadow-black/50" style={{ aspectRatio: `${W} / ${H}` }} />
-            <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-ink-500">live preview · {W}×{H} · text is structured & editable</p>
-          </div>
+        <div className="panel-flat flex min-h-[420px] items-center justify-center overflow-auto p-5">
+          <canvas ref={canvasRef} className="max-h-[64vh] w-auto max-w-full rounded-[10px] border border-ink-700 shadow-2xl shadow-black/50" />
         </div>
 
         <div className="space-y-4">
-          <div className="panel-flat p-4">
-            <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-ink-400"><Frame size={13} className="text-jade-400" /> Why structured?</div>
-            <p className="mt-2 text-[12px] leading-relaxed text-ink-400">
-              Image models text-rendering pe galti karte hain. Yahan text <strong className="text-ink-200">design data</strong> hai — hamesha crisp, editable, brand-safe. Sirf background AI se aata hai (Pollinations free).
-            </p>
+          <div className="panel-flat space-y-4 p-4">
+            <CreditEstimate task="poster" providerId="auto" model="" params={{ width: dims.w, height: dims.h }} />
+            {err && <InfoNote tone="coral">{err}</InfoNote>}
+            <Button className="w-full" size="lg" loading={busy} icon={<Wand2 size={16} />} onClick={generate}>Save Poster</Button>
+            <Button className="w-full" variant="outline" icon={<Download size={14} />} onClick={() => {
+              const c = canvasRef.current!;
+              c.toBlob((b) => { if (b) { const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `${(title || "poster").toLowerCase().replace(/\s+/g, "-")}.png`; a.click(); } });
+            }}>Download PNG</Button>
           </div>
           <div className="panel-flat p-4">
-            <div className="text-[12px] font-bold uppercase tracking-wide text-ink-400">Export</div>
-            <ul className="mt-2 space-y-1.5 text-[12px] text-ink-400">
-              <li>· PNG at full {W}×{H} resolution</li>
-              <li>· Save to Library (blob storage)</li>
-              <li>· Re-edit anytime from Library</li>
-            </ul>
+            <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-ink-400"><Frame size={13} className="text-solar-400" /> Why structured?</div>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink-400">Text canvas pe draw hota hai — crisp, editable, koi AI-rendered spelling mistake nahi. AI background chahiye to Image Studio se bana ke yahan use karo.</p>
           </div>
         </div>
       </div>

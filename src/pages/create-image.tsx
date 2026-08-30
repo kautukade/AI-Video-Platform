@@ -1,12 +1,10 @@
 import { useMemo, useState } from "react";
-import { ImageIcon, Wand2 } from "lucide-react";
+import { Image as ImageIcon, Wand2 } from "lucide-react";
 import { api } from "../server/api";
 import { useApp } from "../state/store";
 import { ASPECTS, friendlyError, STYLES_IMAGE } from "../lib/utils";
 import { Button, Field, Input, InfoNote, Segmented, Select, Textarea } from "../components/ui";
 import { CapabilitySetupWizard, CreditEstimate, GenerationPreview, hasCapableProvider, ModelSelect, ProviderSelect, WorkspaceHeader } from "../components/create-bits";
-
-const QUALITIES = ["draft", "standard", "hd"];
 
 export default function CreateImage() {
   const { user, toast, tick } = useApp();
@@ -59,7 +57,7 @@ export default function CreateImage() {
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Style"><Select value={style} onChange={(e) => setStyle(e.target.value)}>{STYLES_IMAGE.map((s) => <option key={s}>{s}</option>)}</Select></Field>
-              <Field label="Quality"><Select value={quality} onChange={(e) => setQuality(e.target.value)}>{QUALITIES.map((q) => <option key={q}>{q}</option>)}</Select></Field>
+              <Field label="Quality"><Select value={quality} onChange={(e) => setQuality(e.target.value)}>{["draft", "standard", "hd"].map((q) => <option key={q}>{q}</option>)}</Select></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Number of Images"><Select value={String(count)} onChange={(e) => setCount(Number(e.target.value))}>{[1, 2, 4].map((n) => <option key={n} value={n}>{n}</option>)}</Select></Field>
@@ -74,9 +72,7 @@ export default function CreateImage() {
           <GenerationPreview genId={genId} emptyHint={<>
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-ink-600 bg-ink-800 text-ink-400"><ImageIcon size={22} /></div>
             <h3 className="font-display mt-4 text-[17px] font-bold text-ink-100">Your images render here</h3>
-            <p className="mt-1.5 max-w-xs text-[12.5px] leading-relaxed text-ink-500">
-              Pollinations (free, no key) pehle se connected hai. Zyada quality ke liye Hugging Face FLUX ya OpenRouter Gemini image connect karo.
-            </p>
+            <p className="mt-1.5 max-w-xs text-[12.5px] leading-relaxed text-ink-500">Pollinations (free, no key) pehle se connected hai. Zyada quality ke liye Hugging Face FLUX ya OpenRouter connect karo.</p>
           </>} />
         )}
 
@@ -92,9 +88,7 @@ export default function CreateImage() {
           </div>
           <div className="panel-flat p-4">
             <div className="text-[12px] font-bold uppercase tracking-wide text-ink-400">Privacy</div>
-            <p className="mt-2 text-[12px] leading-relaxed text-ink-400">
-              {providerId === "ollama" ? "Running locally — prompt stays on this device." : "Prompt is sent only to the selected provider. Keys are AES-GCM encrypted."}
-            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink-400">{providerId === "ollama" ? "Running locally — prompt stays on this device." : "Prompt is sent only to the selected provider. Keys are AES-GCM encrypted."}</p>
           </div>
         </div>
       </div>

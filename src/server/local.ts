@@ -1,8 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Local AI layer: real machine detection (browser-truthful + optional desktop
-// bridge), Ollama management (status / pull / delete / test), hardware-based
-// model recommendations, and vision analysis. NO fake values — anything the
-// browser can't know is reported as unknown with an honest warning.
+// bridge), Ollama management, hardware-based recommendations, vision analysis.
+// NO fake values — anything the browser can't know is reported as unknown.
 // ─────────────────────────────────────────────────────────────────────────────
 import { ApiError, GpuInfo, MachineProfile, ModelRecommendation, OllamaStatus } from "../lib/types";
 import { nowIso } from "../lib/utils";
@@ -13,7 +12,6 @@ const LS_HOST = "acs:ollama:host";
 export const getOllamaHost = () => localStorage.getItem(LS_HOST) || "http://127.0.0.1:11434";
 export const setOllamaHost = (h: string) => localStorage.setItem(LS_HOST, h);
 
-// ── Bridge ──
 export async function bridgeStatus(): Promise<{ online: boolean }> {
   try {
     const r = await fetch(`${BRIDGE}/health`, { signal: AbortSignal.timeout(1500) });
@@ -21,17 +19,14 @@ export async function bridgeStatus(): Promise<{ online: boolean }> {
   } catch { return { online: false }; }
 }
 
-// ── Hardware detection ──
 async function browserGpus(): Promise<{ gpus: GpuInfo[]; webgpu: boolean }> {
   try {
     const nav = navigator as any;
     if (nav.gpu?.requestAdapter) {
       const ad = await nav.gpu.requestAdapter();
       if (ad) {
-        let vram: number | null = null;
-        try { vram = (await ad.requestAdapterInfo?.())?.device ? null : null; } catch { /* noop */ }
         const info = await (ad.requestAdapterInfo?.() ?? Promise.resolve({ vendor: "", device: "", description: "" }));
-        return { gpus: [{ vendor: info.vendor || "WebGPU", name: info.description || info.device || "WebGPU adapter", vramMB: vram }], webgpu: true };
+        return { gpus: [{ vendor: info.vendor || "WebGPU", name: info.description || info.device || "WebGPU adapter", vramMB: null }], webgpu: true };
       }
     }
   } catch { /* fall through */ }
@@ -58,9 +53,9 @@ export async function detectMachine(): Promise<MachineProfile> {
   };
   if ((navigator as any).userAgentData) {
     const ua: any = (navigator as any).userAgentData;
-    base.os = `${ua.platform ?? "unknown"}`;
+    base.os = ua.platform ?? "unknown";
     try {
-      const hi = await ua.getHighEntropyValues(["architecture", "platformVersion", "fullVersionList"]);
+      const hi = await ua.getHighEntropyValues(["architecture", "platformVersion"]);
       base.architecture = hi.architecture ?? "unknown";
       base.os = `${ua.platform} ${hi.platformVersion ?? ""}`.trim();
     } catch { warnings.push("High-entropy OS details unavailable."); }
@@ -73,7 +68,6 @@ export async function detectMachine(): Promise<MachineProfile> {
   if (!base.gpus.length) warnings.push("No GPU exposed to the browser.");
   if (base.ramMB == null) warnings.push("Device memory unavailable in this browser (Chrome reports a rounded value).");
 
-  // Storage estimate = browser origin quota (honest, partial disk picture).
   try {
     if (navigator.storage?.estimate) {
       const est = await navigator.storage.estimate();
@@ -190,7 +184,6 @@ export async function ollamaTestModel(endpoint: string, model: string, vision: b
   const t0 = performance.now();
   const body: Record<string, any> = { model, stream: false, options: { num_predict: 16 } };
   if (vision) {
-    // 1x1 red PNG as a real image input.
     body.prompt = "Describe this image in one short sentence.";
     body.images = ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="];
   } else {
@@ -222,7 +215,6 @@ const TEXT_MODELS = [
   { name: "qwen3:8b", sizeMB: 5200, vramMB: 7000, tier: "Best" as const, note: "Top-tier quality at 8B" },
   { name: "mistral", sizeMB: 4100, vramMB: 5800, tier: "Good" as const, note: "Fast European 7B" },
   { name: "qwen3:14b", sizeMB: 9000, vramMB: 12000, tier: "Experimental" as const, note: "Big — needs a strong GPU" },
-  { name: "llama3.1:70b", sizeMB: 40000, vramMB: 48000, tier: "Experimental" as const, note: "Flagship — multi-GPU territory" },
 ];
 const VISION_MODELS = [
   { name: "moondream:1.8b", sizeMB: 1700, vramMB: 2600, tier: "Best" as const, note: "Smallest usable vision model" },
@@ -240,28 +232,16 @@ export function recommendModels(profile: MachineProfile | null, installed: { nam
   const fits = (m: { sizeMB: number; vramMB: number }) => {
     if (diskFreeMB != null && m.sizeMB * 1.15 > diskFreeMB) return false;
     if (vramMB > 0) return m.vramMB <= vramMB * 0.92 || m.sizeMB <= ramMB * 0.4;
-    return m.sizeMB <= ramMB * 0.55; // CPU-only: model must fit in ~half RAM
+    return m.sizeMB <= ramMB * 0.55;
   };
   const build = (list: typeof TEXT_MODELS, category: "text" | "vision") =>
-    list
-      .filter(fits)
-      .sort((a, b) => b.sizeMB - a.sizeMB)
-      .slice(0, 3)
+    list.filter(fits).sort((a, b) => b.sizeMB - a.sizeMB).slice(0, 3)
       .map((m) => ({ ...m, category, vision: category === "vision", installed: inst.has(m.name.split(":")[0]) || inst.has(m.name) }));
   return [...build(TEXT_MODELS, "text"), ...build(VISION_MODELS, "vision")];
 }
 export const ALL_PULLABLE = [...TEXT_MODELS, ...VISION_MODELS];
 
 // ── Vision analysis (local-first, honest labelling) ──
-export interface VisionEngine { kind: "local" | "cloud"; label: string; }
-export function pickVisionEngine(): VisionEngine | null {
-  try {
-    const st = JSON.parse(localStorage.getItem("acs:vision-engine") || "null");
-    if (st) return st;
-  } catch { /* noop */ }
-  return null;
-}
-
 const ANALYSIS_PROMPT = `Describe this image for an AI generation pipeline. Reply as strict JSON with keys: appearance, clothing, hair, face, style, identity_features (array). No markdown, JSON only.`;
 
 export async function analyzeImageLocal(endpoint: string, model: string, imageDataUri: string): Promise<Record<string, any>> {
@@ -276,8 +256,8 @@ export async function analyzeImageLocal(endpoint: string, model: string, imageDa
   return parseProfile(data.response ?? "");
 }
 
-export async function analyzeImageCloud(providerId: "pollinations" | "openrouter", cfg: { apiKey: string | null; model?: string | null }, imageDataUri: string): Promise<Record<string, any>> {
-  if (providerId === "openrouter" && cfg.apiKey) {
+export async function analyzeImageCloud(_providerId: string, cfg: { apiKey: string | null; model?: string | null }, imageDataUri: string): Promise<Record<string, any>> {
+  if (cfg.apiKey) {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST", signal: AbortSignal.timeout(120000),
       headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" },

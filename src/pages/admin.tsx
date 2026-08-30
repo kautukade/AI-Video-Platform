@@ -7,7 +7,6 @@ import { Button, ConfirmModal, Field, Input, StatCard, StatusBadge, Tabs, Tag, T
 import { AdminSettings, Job, User } from "../lib/types";
 
 export default function AdminPage() {
-  const { toast, bump } = useApp();
   const [tab, setTab] = useState("overview");
   const stats = useMemo(() => { try { return api.admin.stats(); } catch { return null; } }, [tab]);
 
@@ -52,8 +51,7 @@ export default function AdminPage() {
                 <div className="mt-3 space-y-2">
                   {Object.entries(stats.byModel).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => (
                     <div key={m} className="flex items-center justify-between gap-3">
-                      <span className="truncate font-mono text-[11.5px] text-ink-300">{m}</span>
-                      <Tag tone="ink">{n}</Tag>
+                      <span className="truncate font-mono text-[11.5px] text-ink-300">{m}</span><Tag tone="ink">{n}</Tag>
                     </div>
                   ))}
                   {Object.keys(stats.byModel).length === 0 && <p className="text-[12px] text-ink-500">No generations yet.</p>}
@@ -78,28 +76,19 @@ function UsersTab() {
   return (
     <div className="panel-flat overflow-hidden">
       <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
-            <th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th>
-            <th className="hidden px-4 py-3 sm:table-cell">Joined</th><th className="px-4 py-3 text-right">Actions</th>
-          </tr>
-        </thead>
+        <thead><tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
+          <th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+        </tr></thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id} className="border-b border-ink-800 last:border-0 hover:bg-ink-800/50">
-              <td className="px-4 py-3">
-                <div className="font-bold text-ink-100">{u.name}</div>
-                <div className="font-mono text-[10.5px] text-ink-500">{u.email}</div>
-              </td>
+              <td className="px-4 py-3"><div className="font-bold text-ink-100">{u.name}</div><div className="font-mono text-[10.5px] text-ink-500">{u.email}</div></td>
               <td className="px-4 py-3"><Tag tone={u.role === "admin" ? "solar" : "ink"}>{u.role}</Tag></td>
               <td className="px-4 py-3">{u.suspended ? <Tag tone="coral">suspended</Tag> : <Tag tone="jade">active</Tag>}</td>
-              <td className="hidden px-4 py-3 font-mono text-[11px] text-ink-400 sm:table-cell">{fmtDate(u.createdAt)}</td>
               <td className="px-4 py-3">
                 <div className="flex justify-end gap-1.5">
                   <Button size="sm" variant="ghost" icon={<Coins size={12} />} onClick={() => setAdjust({ u, amount: "500" })}>Credits</Button>
-                  <Button size="sm" variant="ghost" onClick={async () => { try { await api.admin.adjustCredits(u.id, 0.0001, "ping"); } catch { /* noop */ } try { api.admin.suspendUser(u.id, !u.suspended); toast("success", u.suspended ? "User reactivated" : "User suspended"); bump(); } catch (e) { toast("error", "Failed", friendlyError(e).message); } }}>
-                    {u.suspended ? "Activate" : "Suspend"}
-                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { try { api.admin.suspendUser(u.id, !u.suspended); toast("success", u.suspended ? "Reactivated" : "Suspended"); bump(); } catch (e) { toast("error", "Failed", friendlyError(e).message); } }}>{u.suspended ? "Activate" : "Suspend"}</Button>
                 </div>
               </td>
             </tr>
@@ -111,7 +100,7 @@ function UsersTab() {
           if (!adjust) return;
           const amt = Number(adjust.amount);
           if (!Number.isFinite(amt) || amt === 0) { toast("error", "Invalid amount"); return; }
-          try { await api.admin.adjustCredits(adjust.u.id, amt, "Admin adjustment"); toast("success", "Credits adjusted", `${amt > 0 ? "+" : ""}${amt}`); bump(); }
+          try { await api.admin.adjustCredits(adjust.u.id, amt, "Admin adjustment"); toast("success", "Credits adjusted"); bump(); }
           catch (e) { toast("error", "Failed", friendlyError(e).message); }
         }}>
         <Field label="Amount (negative to deduct)"><Input type="number" value={adjust?.amount ?? ""} onChange={(e) => setAdjust((s) => s ? { ...s, amount: e.target.value } : s)} /></Field>
@@ -126,26 +115,19 @@ function PricingTab() {
   const [edit, setEdit] = useState<any | null>(null);
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button size="sm" onClick={() => setEdit({ id: "", taskType: "image", providerId: "*", model: "*", base: 5, unit: "per_generation", resolutionMult: {}, qualityMult: {}, note: "" })}>+ New rule</Button>
-      </div>
+      <div className="flex justify-end"><Button size="sm" onClick={() => setEdit({ id: "", taskType: "image", providerId: "*", model: "*", base: 5, unit: "per_generation", resolutionMult: {}, qualityMult: {}, note: "" })}>+ New rule</Button></div>
       <div className="panel-flat overflow-hidden">
         <table className="w-full text-left text-[12.5px]">
-          <thead>
-            <tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
-              <th className="px-4 py-3">Task</th><th className="px-4 py-3">Provider</th><th className="hidden px-4 py-3 sm:table-cell">Model</th>
-              <th className="px-4 py-3 text-right">Base</th><th className="hidden px-4 py-3 md:table-cell">Unit</th><th className="hidden px-4 py-3 lg:table-cell">Note</th><th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
+          <thead><tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
+            <th className="px-4 py-3">Task</th><th className="px-4 py-3">Provider</th><th className="px-4 py-3 text-right">Base</th><th className="hidden px-4 py-3 md:table-cell">Unit</th><th className="px-4 py-3 text-right">Actions</th>
+          </tr></thead>
           <tbody>
             {rules.map((r) => (
               <tr key={r.id} className="border-b border-ink-800 last:border-0 hover:bg-ink-800/50">
                 <td className="px-4 py-2.5"><Tag tone="solar">{r.taskType}</Tag></td>
                 <td className="px-4 py-2.5 font-mono text-[11.5px] text-ink-300">{r.providerId}</td>
-                <td className="hidden px-4 py-2.5 font-mono text-[11.5px] text-ink-400 sm:table-cell">{r.model}</td>
                 <td className="px-4 py-2.5 text-right font-mono font-bold text-ink-100">{r.base}</td>
                 <td className="hidden px-4 py-2.5 font-mono text-[11px] text-ink-400 md:table-cell">{r.unit}</td>
-                <td className="hidden max-w-[220px] truncate px-4 py-2.5 text-ink-400 lg:table-cell">{r.note}</td>
                 <td className="px-4 py-2.5 text-right">
                   <Button size="sm" variant="ghost" onClick={() => setEdit(r)}>Edit</Button>
                   <Button size="sm" variant="ghost" onClick={() => { api.admin.deletePricing(r.id); toast("success", "Rule deleted"); bump(); }}>Del</Button>
@@ -177,12 +159,9 @@ function JobsTab() {
   return (
     <div className="panel-flat overflow-hidden">
       <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
-            <th className="px-4 py-3">Created</th><th className="px-4 py-3">Status</th><th className="hidden px-4 py-3 sm:table-cell">Stage</th>
-            <th className="hidden px-4 py-3 md:table-cell">Error</th>
-          </tr>
-        </thead>
+        <thead><tr className="border-b border-ink-700 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-500">
+          <th className="px-4 py-3">Created</th><th className="px-4 py-3">Status</th><th className="hidden px-4 py-3 sm:table-cell">Stage</th><th className="hidden px-4 py-3 md:table-cell">Error</th>
+        </tr></thead>
         <tbody>
           {jobs.map((j: Job) => (
             <tr key={j.id} className="border-b border-ink-800 last:border-0 hover:bg-ink-800/50">
@@ -208,24 +187,15 @@ function SettingsTab() {
     <div className="max-w-2xl space-y-4">
       <div className="panel-flat space-y-4 p-5">
         <div className="flex items-start justify-between gap-4 rounded-[10px] border border-ink-700 bg-ink-850 px-4 py-3">
-          <div>
-            <div className="text-[13px] font-bold text-ink-100">Unlimited mode (no credit limits)</div>
-            <p className="mt-0.5 text-[11.5px] text-ink-400">Local build default — saari generations free. Off karo to pricing rules lagenge.</p>
-          </div>
+          <div><div className="text-[13px] font-bold text-ink-100">Unlimited mode (no credit limits)</div><p className="mt-0.5 text-[11.5px] text-ink-400">Local build default — saari generations free.</p></div>
           <Toggle checked={s.unlimitedMode} onChange={(v) => set({ unlimitedMode: v })} />
         </div>
         <div className="flex items-start justify-between gap-4 rounded-[10px] border border-ink-700 bg-ink-850 px-4 py-3">
-          <div>
-            <div className="text-[13px] font-bold text-ink-100">Local Simulator (mock mode)</div>
-            <p className="mt-0.5 text-[11.5px] text-ink-400">On-device procedural engine — output hamesha "SIMULATED" label ke saath. Default off (real-only).</p>
-          </div>
+          <div><div className="text-[13px] font-bold text-ink-100">Local Simulator (mock mode)</div><p className="mt-0.5 text-[11.5px] text-ink-400">Output hamesha "SIMULATED" label ke saath. Default off.</p></div>
           <Toggle checked={s.mockEnabled} onChange={(v) => set({ mockEnabled: v })} />
         </div>
         <div className="flex items-start justify-between gap-4 rounded-[10px] border border-ink-700 bg-ink-850 px-4 py-3">
-          <div>
-            <div className="text-[13px] font-bold text-ink-100">Maintenance mode</div>
-            <p className="mt-0.5 text-[11.5px] text-ink-400">Non-admin generations temporarily block.</p>
-          </div>
+          <div><div className="text-[13px] font-bold text-ink-100">Maintenance mode</div><p className="mt-0.5 text-[11.5px] text-ink-400">Non-admin generations temporarily block.</p></div>
           <Toggle checked={s.maintenanceMode} onChange={(v) => set({ maintenanceMode: v })} />
         </div>
         <Field label="Max upload (MB)"><Input type="number" value={s.maxUploadMB} onChange={(e) => set({ maxUploadMB: Number(e.target.value) })} /></Field>

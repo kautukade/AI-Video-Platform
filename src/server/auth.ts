@@ -38,10 +38,7 @@ export const auth = {
     if (!u) throw new ApiError("BAD_CREDENTIALS", "Invalid email or password.", 401);
     if (u.suspended) throw new ApiError("SUSPENDED", "This account is suspended.", 403);
     const hash = await hashPassword(password, u.salt);
-    if (hash !== u.passHash) {
-      // Self-heal: algo may have switched contexts — rehash with current algo if seed password.
-      throw new ApiError("BAD_CREDENTIALS", "Invalid email or password.", 401);
-    }
+    if (hash !== u.passHash) throw new ApiError("BAD_CREDENTIALS", "Invalid email or password.", 401);
     const token = uid() + uid();
     db.insert("sessions", { id: uid(), userId: u.id, token, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), createdAt: nowIso() } satisfies Session);
     localToken.set(token);

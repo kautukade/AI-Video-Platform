@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { hashStr, mulberry32 } from "../lib/utils";
 
 /** Deterministic procedural artwork for empty states & thumbnails. */

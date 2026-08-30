@@ -33,8 +33,10 @@ function gpus() {
         if (e) return done([]);
         const rows = out.trim().split("\n").slice(1).map((l) => l.trim()).filter(Boolean);
         done(rows.map((r) => {
-          const [node, ram, name, ver] = r.split(",");
-          return { vendor: /nvidia/i.test(name ?? "") ? "NVIDIA" : /amd|radeon/i.test(name ?? "") ? "AMD" : /intel/i.test(name ?? "") ? "Intel" : "unknown", name: (name ?? node ?? "unknown").trim(), vramMB: Number(ram) > 0 ? Math.round(Number(ram) / 1e6) : null, driver: ver ?? null };
+          const parts = r.split(",");
+          const name = parts[2] ?? "unknown";
+          const ram = Number(parts[1]);
+          return { vendor: /nvidia/i.test(name) ? "NVIDIA" : /amd|radeon/i.test(name) ? "AMD" : /intel/i.test(name) ? "Intel" : "unknown", name: name.trim(), vramMB: ram > 0 ? Math.round(ram / 1e6) : null, driver: parts[3] ?? null };
         }));
       });
     } else if (platform === "darwin") {
@@ -59,9 +61,7 @@ function gpus() {
 async function disk() {
   try {
     const s = await statfs(os.homedir());
-    const totalMB = Math.round((s.blocks * s.bsize) / 1e6);
-    const freeMB = Math.round((s.bavail * s.bsize) / 1e6);
-    return { totalMB, freeMB };
+    return { totalMB: Math.round((s.blocks * s.bsize) / 1e6), freeMB: Math.round((s.bavail * s.bsize) / 1e6) };
   } catch { return { totalMB: null, freeMB: null }; }
 }
 
@@ -82,7 +82,7 @@ const server = http.createServer(async (req, res) => {
     const g = await gpus();
     const d = await disk();
     return json(res, 200, {
-      os: `${os.type()} ${os.release()} (${os.version()})`,
+      os: `${os.type()} ${os.release()}`,
       platform: os.platform(),
       architecture: os.arch(),
       hostname: os.hostname(),
@@ -105,18 +105,14 @@ const server = http.createServer(async (req, res) => {
       const r = await fetch(`${OLLAMA}${path}`, init);
       cors(res);
       res.writeHead(r.status, { "Content-Type": r.headers.get("content-type") ?? "application/json" });
-      // stream (pull progress stays live)
       const body = r.body;
       if (!body) return res.end();
       const reader = body.getReader();
-      const pump = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) return res.end();
-          res.write(Buffer.from(value));
-        }
-      };
-      return pump();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return res.end();
+        res.write(Buffer.from(value));
+      }
     } catch (e) {
       return json(res, 502, { error: `Ollama unreachable at ${OLLAMA}: ${e.message}` });
     }

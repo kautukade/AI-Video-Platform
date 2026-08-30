@@ -1,11 +1,10 @@
 import {
-  ApiError, Capability, Generation, Job, JobStatus, ProviderCredential, StageEvent, TaskType, User,
+  ApiError, Capability, Generation, Job, ProviderCredential, StageEvent, TaskType, User,
 } from "../../lib/types";
 import { nowIso, uid } from "../../lib/utils";
-import { blobStore, blobUrl, db, getAdminSettings } from "../db";
-import { auth, creditEngine } from "../auth";
-import { adapterFor, providerDef, ADAPTERS, normalizeOllamaEndpoint } from "./providers";
-import { vault } from "../db";
+import { blobStore, blobUrl, db, getAdminSettings, vault } from "../db";
+import { creditEngine } from "../auth";
+import { adapterFor, providerDef } from "./providers";
 
 export interface Route { providerId: string; model: string; credential: ProviderCredential | null; billing: string; }
 
@@ -19,7 +18,6 @@ export async function decryptKey(cred: ProviderCredential): Promise<string | nul
   try { return (await vault.decryptJSON<{ k: string }>(cred.keyEnc)).k; } catch { return null; }
 }
 
-/** Best free-first default per provider & capability. */
 const PROVIDER_DEFAULTS: Record<string, Record<string, string>> = {
   pollinations: { image: "flux", text: "openai" },
   ollama: { text: "llama3.2", vision: "llama3.2-vision" },
@@ -48,7 +46,7 @@ export function defaultModelFor(providerId: string, task: TaskType): string {
   return free?.name ?? withCap[0]?.name ?? models[0]?.name ?? "";
 }
 
-// ── Realtime event bus (SSE/WebSocket analogue) ──
+// ── Realtime event bus ──
 const subs = new Set<(genId: string) => void>();
 export function onGenEvent(cb: (genId: string) => void): () => void {
   subs.add(cb);
@@ -67,7 +65,7 @@ export const router = {
     return def.capabilities.includes(capabilityForTask(task));
   },
 
-  candidates(userId: string, task: TaskType, requestedProvider: string | null, model: string | null, prefs: { allowPaid: boolean; defaultProvider?: string | null; defaultModel?: string | null }): { routes: Route[]; notes: string[] } {
+  candidates(userId: string, task: TaskType, requestedProvider: string | null, model: string | null, prefs: { allowPaid: boolean }) {
     const routes: Route[] = [];
     const notes: string[] = [];
     const settings = getAdminSettings();
@@ -93,7 +91,6 @@ export const router = {
       return { routes, notes };
     }
 
-    // AUTO — capability first, best-result affinity, free before paid, latency.
     const aff = (pid: string): number => {
       const table: Record<string, Record<string, number>> = {
         image: { pollinations: 4, huggingface: 3, google: 2, openrouter: 1, replicate: 1 },
@@ -114,14 +111,14 @@ export const router = {
         if (pa !== pb) return pa - pb;
         return (a.latencyMs ?? 9999) - (b.latencyMs ?? 9999);
       })
-      .forEach((c) => pushCred(c, model ?? (c.providerId === prefs.defaultProvider ? prefs.defaultModel ?? null : null)));
+      .forEach((c) => pushCred(c, model ?? null));
     if (settings.mockEnabled && this.providerSupports("simulator", task)) {
       routes.push({ providerId: "simulator", model: "studio-sim-v1", credential: null, billing: "free" });
     }
     return { routes, notes };
   },
 
-  selectRoute(userId: string, task: TaskType, requestedProvider: string | null, model: string | null, prefs: { allowPaid: boolean; defaultProvider?: string | null; defaultModel?: string | null }): Route {
+  selectRoute(userId: string, task: TaskType, requestedProvider: string | null, model: string | null, prefs: { allowPaid: boolean }): Route {
     const { routes, notes } = this.candidates(userId, task, requestedProvider, model ?? null, { allowPaid: prefs.allowPaid });
     if (!routes.length) {
       throw new ApiError(
@@ -138,8 +135,7 @@ export const router = {
 
   fallbackChain(userId: string, task: TaskType, requestedProvider: string | null, model: string | null, prefs: { allowPaid: boolean; allowPaidFallback: boolean }): Route[] {
     const { routes } = this.candidates(userId, task, requestedProvider, model, { allowPaid: prefs.allowPaid });
-    if (requestedProvider && requestedProvider !== "auto") return routes; // explicit choice = no silent switching
-    // Free routes always allowed; paid fallback only with explicit consent.
+    if (requestedProvider && requestedProvider !== "auto") return routes;
     const free = routes.filter((r) => r.billing === "free" || r.billing === "freemium");
     const paid = routes.filter((r) => r.billing === "paid");
     return [...free, ...(prefs.allowPaidFallback ? paid : [])];
@@ -164,9 +160,7 @@ export const router = {
   },
 };
 
-// ── Job worker (in-browser queue; BullMQ analogue in production) ──
-const running = new Map<string, AbortController>();
-
+// ── Job worker ──
 function patchGeneration(id: string, patch: Record<string, any>): Generation | undefined {
   const g = db.update<Generation>("generations", id, { ...patch, updatedAt: nowIso() } as any);
   if (g) emitGen(g.id);
@@ -194,7 +188,6 @@ async function runJob(jobId: string) {
   const job0 = db.get<Job>("jobs", jobId);
   if (!job0 || job0.status !== "queued") return;
   const ac = new AbortController();
-  running.set(jobId, ac);
   const t0 = Date.now();
   let gen = db.get<Generation>("generations", job0.generationId)!;
   const user = db.get<User>("users", job0.userId)!;
@@ -216,7 +209,7 @@ async function runJob(jobId: string) {
   let lastError: ApiError | null = null;
   for (let i = 0; i < chain.length; i++) {
     const route = chain[i];
-    if (job0.requestedCancel || db.get<Job>("jobs", jobId)?.requestedCancel) { cancelJob(jobId, gen, user); return; }
+    if (db.get<Job>("jobs", jobId)?.requestedCancel) { cancelJob(jobId, gen, user); return; }
     try {
       patchGeneration(gen.id, { providerId: route.providerId, model: route.model });
       await executeRoute(jobId, gen, route, user, ac, settings.mockEnabled, t0);
@@ -242,7 +235,6 @@ async function executeRoute(jobId: string, genIn: Generation, route: Route, user
   db.update("jobs", jobId, { status: "generating", stage: "Generating" } as any);
   gen = patchGeneration(gen.id, { status: "generating" })!;
 
-  // Resolve character image to a URL adapters can consume.
   let charUrl: string | undefined;
   if (gen.params.characterAssetId) {
     const a = db.get<any>("assets", gen.params.characterAssetId);
@@ -255,7 +247,6 @@ async function executeRoute(jobId: string, genIn: Generation, route: Route, user
     width: gen.params.width, height: gen.params.height, aspect: gen.params.aspect, duration: gen.params.duration,
     seed: gen.params.seed, style: gen.params.style, camera: gen.params.camera, language: gen.params.language,
     voice: gen.params.voice, quality: gen.params.quality, count: gen.params.count, temperature: gen.params.temperature,
-    steps: gen.params.steps, cfg: gen.params.cfg, fps: gen.params.fps,
     characterImageUrl: charUrl, characterName: gen.params.characterName, expression: gen.params.expression,
     action: gen.params.action, background: gen.params.background, scenes: gen.params.scenes, script: gen.params.script,
     signal: ac.signal, cancelCheck,
@@ -311,7 +302,6 @@ function cancelJob(jobId: string, gen: Generation, user: User) {
   void creditEngine.refund(user.id, gen.creditEstimate, gen.id, `${gen.type} cancelled`);
 }
 
-/** Recover jobs interrupted by a reload. */
 export function startWorker() {
   db.where<Job>("jobs", (j) => ["queued", "preparing", "generating", "processing"].includes(j.status)).forEach((j) => {
     db.update("jobs", j.id, { status: "failed", stage: "Failed", finishedAt: nowIso(), error: "Interrupted by reload — credits refunded." } as any);
@@ -323,5 +313,3 @@ export function startWorker() {
     }
   });
 }
-
-export { normalizeOllamaEndpoint, ADAPTERS };
