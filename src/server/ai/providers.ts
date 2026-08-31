@@ -1,6 +1,4 @@
-import {
-  AIProviderAdapter, ApiError, Capability, DiscoveredModel, GenRequest, GenResult, HealthResult, ProviderCfg, ProviderDef,
-} from "../../lib/types";
+import { AIProviderAdapter, ApiError, Capability, DiscoveredModel, GenRequest, GenResult, HealthResult, ProviderCfg, ProviderDef } from "../../lib/types";
 import { simCharacterVideo, simImage, simText, simVideo } from "./simulator";
 
 export const PROVIDER_REGISTRY: ProviderDef[] = [
@@ -28,7 +26,7 @@ function mapProviderError(e: unknown, provider: string): ApiError {
   const status = err?.status ?? err?.response?.status;
   const msg = err?.message ?? String(e);
   if (status === 401 || status === 403) return new ApiError("INVALID_API_KEY", `${provider} rejected the API key (HTTP ${status}).`, 401);
-  if (status === 402) return new ApiError("PROVIDER_BALANCE", `${provider} billing issue — no balance left.`, 402);
+  if (status === 402) return new ApiError("PROVIDER_BALANCE", `${provider} billing issue — no balance left on the provider account.`, 402);
   if (status === 429) return new ApiError("RATE_LIMITED", `${provider} rate limit reached. Wait a moment and retry.`, 429);
   if (status === 404) return new ApiError("MODEL_UNAVAILABLE", `Model endpoint not found on ${provider}.`, 404);
   if (status >= 500) return new ApiError("PROVIDER_DOWN", `${provider} is having trouble (HTTP ${status}).`, 502);
@@ -40,7 +38,7 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }>
   const value = await fn();
   return { value, ms: Math.round(performance.now() - t0) };
 }
-export async function urlToBlob(u: string, signal?: AbortSignal): Promise<Blob> {
+async function urlToBlob(u: string, signal?: AbortSignal): Promise<Blob> {
   const r = await fetch(u, { signal });
   if (!r.ok) throw new ApiError("ASSET_FETCH", `Failed to download asset (HTTP ${r.status}).`, 502);
   return r.blob();
@@ -123,12 +121,7 @@ export const ollama: AIProviderAdapter = {
       const n = data.models?.length ?? 0;
       return { ok: true, message: `Ollama reachable · ${n} installed model${n === 1 ? "" : "s"} · ${ms}ms` };
     } catch (e) {
-      return {
-        ok: false,
-        message: `Could not connect to Ollama at ${ep}. ` + (e instanceof TypeError
-          ? "Unreachable from the browser — make sure Ollama is running (ollama serve) with OLLAMA_ORIGINS=*, or run the local bridge (node local-bridge.mjs)."
-          : mapProviderError(e, "Ollama").message),
-      };
+      return { ok: false, message: `Could not connect to Ollama at ${ep}. ` + (e instanceof TypeError ? "Unreachable — make sure Ollama is running (ollama serve) with OLLAMA_ORIGINS=*, or run node local-bridge.mjs." : mapProviderError(e, "Ollama").message) };
     }
   },
   async health(cfg): Promise<HealthResult> {
@@ -147,15 +140,11 @@ export const ollama: AIProviderAdapter = {
     return (data.models ?? []).map((m: any) => ({
       name: m.name, displayName: m.name,
       capabilities: (/vision|vl|llava|moondream|bakllava/i.test(m.name) ? ["text", "vision"] : ["text"]) as Capability[],
-      size: m.size ? `${(m.size / 1e9).toFixed(1)} GB` : undefined,
-      pricingNote: "Local · free",
+      size: m.size ? `${(m.size / 1e9).toFixed(1)} GB` : undefined, pricingNote: "Local · free",
     }));
   },
   async generate(cfg, req, onStage) {
-    if (req.type !== "text") {
-      throw new ApiError("UNSUPPORTED",
-        `Ollama runs text/vision language models — it does not support ${req.type} generation. Connect Replicate, Luma, NVIDIA NIM or Hugging Face for video/images.`, 422);
-    }
+    if (req.type !== "text") throw new ApiError("UNSUPPORTED", `Ollama runs text/vision models — it does not support ${req.type} generation. Connect Replicate/Luma/NIM/HF for video/images.`, 422);
     const ep = normalizeOllamaEndpoint(cfg.endpoint ?? "");
     const model = req.modelHint ?? cfg.model ?? "llama3.2";
     onStage(`Running ${model} on your local Ollama…`);
@@ -177,7 +166,7 @@ export const ollama: AIProviderAdapter = {
   },
 };
 
-// ── Hugging Face (Inference Providers route) ──
+// ── Hugging Face (new Inference route) ──
 const HF_INFER = "https://router.huggingface.co/hf-inference/models";
 export const huggingface: AIProviderAdapter = {
   id: "huggingface",
@@ -220,7 +209,7 @@ export const huggingface: AIProviderAdapter = {
       if (res.status === 503) throw new ApiError("MODEL_LOADING", `HF is loading ${imageModel} (cold start). Try again in ~30s.`, 503);
       if (!res.ok) throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}`), { status: res.status }), "Hugging Face");
       const ct = res.headers.get("content-type") ?? "";
-      if (!ct.startsWith("image")) throw new ApiError("UNSUPPORTED_OUTPUT", "HF returned non-image data.", 422);
+      if (!ct.startsWith("image")) throw new ApiError("UNSUPPORTED_OUTPUT", "HF returned non-image data — the model may need a Pro token.", 422);
       onStage("Downloading image…");
       return { blob: await res.blob(), mime: ct, meta: { model: imageModel, free: true } };
     }
@@ -231,10 +220,10 @@ export const huggingface: AIProviderAdapter = {
       try {
         res = await fetch(`${HF_INFER}/${videoModel}`, { method: "POST", headers, signal: req.signal, body: JSON.stringify({ inputs: req.prompt, parameters: { seed: req.seed } }) });
       } catch (e) { throw mapProviderError(e, "Hugging Face"); }
-      if (res.status === 503) throw new ApiError("MODEL_LOADING", `HF is loading ${videoModel} — video is slow on the free tier. Try Replicate or Luma, or retry shortly.`, 503);
+      if (res.status === 503) throw new ApiError("MODEL_LOADING", `HF is loading ${videoModel} — video models are slow on the free tier. Try Replicate or Luma.`, 503);
       if (!res.ok) throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}`), { status: res.status }), "Hugging Face");
       const ct = res.headers.get("content-type") ?? "";
-      if (!ct.startsWith("video") && !ct.includes("octet-stream")) throw new ApiError("UNSUPPORTED_OUTPUT", "HF did not return a video. Try Replicate, Luma or NVIDIA NIM.", 422);
+      if (!ct.startsWith("video") && !ct.includes("octet-stream")) throw new ApiError("UNSUPPORTED_OUTPUT", "HF did not return a video for this model. Try Replicate, Luma or NVIDIA NIM.", 422);
       onStage("Downloading video…");
       return { blob: await res.blob(), mime: ct || "video/mp4", meta: { model: videoModel, free: true } };
     }
@@ -243,10 +232,7 @@ export const huggingface: AIProviderAdapter = {
       onStage(`Generating text with ${textModel}…`);
       let res: Response;
       try {
-        res = await fetch(`${HF_INFER}/${textModel}`, {
-          method: "POST", headers, signal: req.signal,
-          body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: 512, temperature: req.temperature ?? 0.7, return_full_text: false } }),
-        });
+        res = await fetch(`${HF_INFER}/${textModel}`, { method: "POST", headers, signal: req.signal, body: JSON.stringify({ inputs: req.prompt, parameters: { max_new_tokens: 512, temperature: req.temperature ?? 0.7, return_full_text: false } }) });
       } catch (e) { throw mapProviderError(e, "Hugging Face"); }
       if (!res.ok) throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}`), { status: res.status }), "Hugging Face");
       const data = await res.json();
@@ -286,7 +272,7 @@ export const openrouter: AIProviderAdapter = {
       if (modality.split("->")[1]?.includes("image")) caps.push("image");
       if (modality.includes("image->")) caps.push("vision");
       const isFree = Number(m.pricing?.prompt) === 0 || m.id.endsWith(":free");
-      return { name: m.id, displayName: m.name ?? m.id, capabilities: caps, context: m.context_length ?? null, pricingNote: isFree ? "FREE" : "paid" };
+      return { name: m.id, displayName: m.name ?? m.id, capabilities: caps, context: m.context_length ?? null, pricingNote: isFree ? "FREE" : m.pricing?.prompt ? `$${(Number(m.pricing.prompt) * 1e6).toFixed(2)}/M in` : "paid" };
     });
   },
   async generate(cfg, req, onStage) {
@@ -298,7 +284,7 @@ export const openrouter: AIProviderAdapter = {
       try {
         res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
           method: "POST", headers, signal: req.signal,
-          body: JSON.stringify({ model: imageModel, messages: [{ role: "user", content: `Generate an image: ${req.prompt}${req.style ? `. Style: ${req.style}` : ""}` }] }),
+          body: JSON.stringify({ model: imageModel, messages: [{ role: "user", content: `Generate an image: ${req.prompt}${req.style ? `. Style: ${req.style}` : ""}${req.negative ? `. Avoid: ${req.negative}` : ""}` }] }),
         });
       } catch (e) { throw mapProviderError(e, "OpenRouter"); }
       if (!res.ok) throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}`), { status: res.status }), "OpenRouter");
@@ -307,7 +293,7 @@ export const openrouter: AIProviderAdapter = {
       let imageUrl: string | null = null;
       if (typeof parts === "string") imageUrl = parts.match(/https?:\/\/[^\s")]+/)?.[0] ?? null;
       else if (Array.isArray(parts)) imageUrl = parts.find((p) => p.type === "image_url")?.image_url?.url ?? null;
-      if (!imageUrl) throw new ApiError("UNSUPPORTED_OUTPUT", "That OpenRouter model did not return image data.", 422);
+      if (!imageUrl) throw new ApiError("UNSUPPORTED_OUTPUT", "That OpenRouter model did not return image data. Choose an image-capable model.", 422);
       onStage("Downloading generated image…");
       const blob = await urlToBlob(imageUrl, req.signal);
       return { blob, mime: blob.type || "image/png", meta: { model: imageModel } };
@@ -327,18 +313,21 @@ export const openrouter: AIProviderAdapter = {
       if (!text) throw new ApiError("EMPTY_OUTPUT", "OpenRouter returned an empty response.", 502);
       return { mime: "text/plain", text, meta: { model: req.modelHint } };
     }
-    throw new ApiError("UNSUPPORTED", `OpenRouter does not support ${req.type} generation.`, 422);
+    throw new ApiError("UNSUPPORTED", `OpenRouter does not support ${req.type} generation (text/vision/image only).`, 422);
   },
 };
 
 // ── Generic OpenAI-compatible factory ──
 function makeOpenAICompat(id: string, base: string, opts: { image?: boolean; vision?: boolean } = {}): AIProviderAdapter {
   const label = id.charAt(0).toUpperCase() + id.slice(1);
+  const getBase = (cfg: ProviderCfg) => (id === "custom" ? (cfg.endpoint ?? "").replace(/\/+$/, "") : base);
   return {
     id,
     async validate(cfg) {
+      const b = getBase(cfg);
+      if (id === "custom" && !/^https?:\/\//.test(b)) return { ok: false, message: "Base URL must start with http:// or https://" };
       try {
-        const { value: res, ms } = await timed(() => fetch(`${base}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(8000) }));
+        const { value: res, ms } = await timed(() => fetch(`${b}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(8000) }));
         if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
         const data = await res.json().catch(() => ({}));
         return { ok: true, message: `${label} key verified · ${(data.data ?? []).length} models · ${ms}ms` };
@@ -347,12 +336,12 @@ function makeOpenAICompat(id: string, base: string, opts: { image?: boolean; vis
     async health(cfg): Promise<HealthResult> {
       const t0 = performance.now();
       try {
-        const res = await fetch(`${base}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(6000) });
+        const res = await fetch(`${getBase(cfg)}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(6000) });
         return { ok: res.ok, latencyMs: Math.round(performance.now() - t0) };
       } catch { return { ok: false, latencyMs: Math.round(performance.now() - t0), message: "unreachable" }; }
     },
     async listModels(cfg): Promise<DiscoveredModel[]> {
-      const res = await fetch(`${base}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(10000) });
+      const res = await fetch(`${getBase(cfg)}/models`, { headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}, signal: AbortSignal.timeout(10000) });
       if (!res.ok) throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}`), { status: res.status }), label);
       const data = await res.json();
       return (data.data ?? []).slice(0, 300).map((m: any) => {
@@ -364,11 +353,12 @@ function makeOpenAICompat(id: string, base: string, opts: { image?: boolean; vis
       });
     },
     async generate(cfg, req, onStage) {
+      const b = getBase(cfg);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
       Object.entries(cfg.extra ?? {}).forEach(([k, v]) => { if (v && k !== "allowPaid" && k !== "imageEndpoint") headers[k] = v; });
       if (req.type === "image") {
-        const ep = cfg.extra?.imageEndpoint?.trim() || `${base}/images/generations`;
+        const ep = cfg.extra?.imageEndpoint?.trim() || `${b}/images/generations`;
         onStage(`Requesting image from ${ep}…`);
         let res: Response;
         try {
@@ -380,14 +370,14 @@ function makeOpenAICompat(id: string, base: string, opts: { image?: boolean; vis
         let blob: Blob;
         if (item?.b64_json) blob = new Blob([Uint8Array.from(atob(item.b64_json), (c) => c.charCodeAt(0))], { type: "image/png" });
         else if (item?.url) blob = await urlToBlob(item.url, req.signal);
-        else throw new ApiError("UNSUPPORTED_OUTPUT", "Endpoint returned no image data.", 422);
+        else throw new ApiError("UNSUPPORTED_OUTPUT", "Endpoint returned no image data (url/b64_json).", 422);
         return { blob, mime: blob.type || "image/png", meta: { model: req.modelHint ?? cfg.model } };
       }
       if (req.type === "text") {
         onStage(`Generating text via ${label}…`);
         let res: Response;
         try {
-          res = await fetch(`${base}/chat/completions`, {
+          res = await fetch(`${b}/chat/completions`, {
             method: "POST", headers, signal: req.signal,
             body: JSON.stringify({ model: req.modelHint ?? cfg.model, temperature: req.temperature ?? 0.7, messages: [{ role: "user", content: req.prompt }] }),
           });
@@ -411,7 +401,7 @@ export const mistral = makeOpenAICompat("mistral", "https://api.mistral.ai/v1");
 export const together = makeOpenAICompat("together", "https://api.together.xyz/v1", { image: true });
 export const google = makeOpenAICompat("google", "https://generativelanguage.googleapis.com/v1beta/openai", { image: true, vision: true });
 
-// ── NVIDIA NIM (text via OpenAI-compat + LTX video) ──
+// ── NVIDIA NIM (text via compat + REAL LTX video via genai endpoint) ──
 const NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const nimText = makeOpenAICompat("nvidia", NIM_BASE, { vision: true });
 export const nvidia: AIProviderAdapter = {
@@ -427,26 +417,29 @@ export const nvidia: AIProviderAdapter = {
     try {
       res = await fetch(`${NIM_BASE}/genai/lightricks/ltx-video`, {
         method: "POST", headers, signal: req.signal,
-        body: JSON.stringify({ prompt: req.prompt, height: h, width: w, num_frames: numFrames, frame_rate: 24, seed: req.seed ?? 0, guidance_scale: 3 }),
+        body: JSON.stringify({ prompt: req.prompt, height: h, width: w, num_frames: numFrames, frame_rate: 24, seed: req.seed ?? 0, guidance_scale: 3, ...(req.negative ? { negative_prompt: req.negative } : {}) }),
       });
     } catch (e) { throw mapProviderError(e, "NVIDIA NIM"); }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      if (res.status === 402 || /credit/i.test(body)) throw new ApiError("PROVIDER_BALANCE", "NIM free credits exhausted — they refresh monthly.", 402);
+      if (res.status === 402 || /credit/i.test(body)) throw new ApiError("PROVIDER_BALANCE", "NIM free credits exhausted — they refresh monthly at build.nvidia.com.", 402);
       throw mapProviderError(Object.assign(new Error(`HTTP ${res.status}: ${body.slice(0, 140)}`), { status: res.status }), "NVIDIA NIM");
     }
     const raw = await res.text();
     let videoUrl: string | null = null;
+    let lastStatus = "processing";
     for (const line of raw.split("\n")) {
       const t = line.trim();
-      if (!t.startsWith("")) continue;
+      if (!t.startsWith("data:")) continue;
       try {
         const ev = JSON.parse(t.slice(5).trim());
+        if (ev.status) lastStatus = ev.status;
         if (req.cancelCheck?.()) throw new ApiError("CANCELLED", "Generation cancelled.", 499);
-        const cand = ev.content?.url ?? ev.content?.[0]?.url ?? ev.url ?? null;
+        const cand = ev.content?.url ?? ev.content?.[0]?.url ?? ev.content?.[0]?.video_url?.url ?? ev.url ?? ev.video_url ?? null;
         if (cand && typeof cand === "string") videoUrl = cand;
       } catch { /* partial */ }
     }
+    if (lastStatus === "error") throw new ApiError("PROVIDER_ERROR", "NIM video generation errored.", 502);
     if (!videoUrl) throw new ApiError("UNSUPPORTED_OUTPUT", "NIM finished without a video URL — model may be busy. Try Replicate or Luma.", 502);
     onStage("Downloading your NIM video…");
     const blob = await urlToBlob(videoUrl, req.signal);
@@ -507,6 +500,7 @@ export const replicate: AIProviderAdapter = {
     return [
       { name: "lucataco/ltx-video-13b-distilled", displayName: "LTX Video 13B", capabilities: ["video"], pricingNote: "Free daily" },
       { name: "chenxwh/wan2.1-1.3b", displayName: "Wan 2.1", capabilities: ["video"], pricingNote: "Free daily" },
+      { name: "minimax/video-01", displayName: "MiniMax Video-01", capabilities: ["video"], pricingNote: "Free daily" },
       { name: "bytedance/omni-human-1.5", displayName: "OmniHuman 1.5 (character)", capabilities: ["video"], pricingNote: "Free daily" },
       { name: "black-forest-labs/flux-schnell", displayName: "FLUX Schnell", capabilities: ["image"], pricingNote: "Free daily" },
     ];
@@ -527,6 +521,7 @@ export const replicate: AIProviderAdapter = {
       onStage(`Queueing ${model} on Replicate (free tier)…`);
       const input: Record<string, any> = { prompt: req.prompt, seed: req.seed };
       if (/ltx/i.test(model)) { input.width = Math.min(1280, req.width ?? 1216); input.height = Math.min(768, req.height ?? 704); input.num_frames = Math.min(257, Math.round((req.duration ?? 5) * 24) + 1); }
+      if (req.characterImageUrl && /omni/i.test(model)) input.image = req.characterImageUrl;
       const pred = await repCreate(cfg, model, input, req.signal);
       const out = await repPoll(cfg, pred, onStage, req.cancelCheck);
       const url = firstUrl(out);
@@ -549,7 +544,7 @@ export const replicate: AIProviderAdapter = {
         }
       } catch { /* proceed without audio */ }
       if (!audioUrl) onStage("TTS unavailable — generating silent character video.", true);
-      onStage(`Animating character with OmniHuman 1.5 on Replicate…`);
+      onStage("Animating character with OmniHuman 1.5 on Replicate…");
       const pred = await repCreate(cfg, "bytedance/omni-human-1.5", { image: req.characterImageUrl, audio: audioUrl ?? "", seed: req.seed }, req.signal);
       const out = await repPoll(cfg, pred, onStage, req.cancelCheck);
       const url = firstUrl(out);
@@ -581,7 +576,10 @@ export const luma: AIProviderAdapter = {
     } catch { return { ok: false, latencyMs: Math.round(performance.now() - t0), message: "unreachable" }; }
   },
   async listModels(): Promise<DiscoveredModel[]> {
-    return [{ name: "photon-1", displayName: "Luma Photon", capabilities: ["video"], pricingNote: "Free monthly" }];
+    return [
+      { name: "photon-1", displayName: "Luma Photon", capabilities: ["video"], pricingNote: "Free monthly" },
+      { name: "dream-machine", displayName: "Dream Machine", capabilities: ["video"], pricingNote: "Free monthly" },
+    ];
   },
   async generate(cfg, req, onStage) {
     if (req.type !== "video" && req.type !== "character") throw new ApiError("UNSUPPORTED", `Luma generates video only — not ${req.type}.`, 422);

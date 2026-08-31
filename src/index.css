@@ -50,11 +50,7 @@ body {
   border-radius: 14px;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.7);
 }
-.panel-flat {
-  background: rgba(18, 23, 34, 0.82);
-  border: 1px solid var(--color-ink-700);
-  border-radius: 14px;
-}
+.panel-flat { background: rgba(18, 23, 34, 0.82); border: 1px solid var(--color-ink-700); border-radius: 14px; }
 .bg-grid {
   background-image: linear-gradient(rgba(107, 120, 150, 0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(107, 120, 150, 0.06) 1px, transparent 1px);
@@ -69,6 +65,7 @@ body {
 @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
 @keyframes indet { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes drift { 0%,100% { transform: translate(0,0); } 50% { transform: translate(26px,-18px); } }
 
 .anim-fade-in { animation: fade-in 0.35s ease both; }
 .anim-fade-up { animation: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
@@ -87,17 +84,12 @@ body {
   background: linear-gradient(90deg, var(--color-solar-500), var(--color-solar-300));
   animation: indet 1.25s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
+.drift { animation: drift 11s ease-in-out infinite; }
 
 .itc-marquee { display: flex; width: max-content; animation: marquee 26s linear infinite; }
 .itc-marquee:hover { animation-play-state: paused; }
-.itc-headline {
-  font-family: var(--font-display); font-weight: 800; letter-spacing: -0.035em; line-height: 0.88;
-  font-size: clamp(3.6rem, 13.5vw, 11.5rem);
-}
+.itc-headline { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.035em; line-height: 0.88; font-size: clamp(3.6rem, 13.5vw, 11.5rem); }
 .itc-outline { color: transparent; -webkit-text-stroke: 2.5px var(--color-ink-950); }
 .itc-contact { font-family: var(--font-mono); font-weight: 700; font-size: clamp(1.2rem, 3.6vw, 2.7rem); letter-spacing: -0.02em; word-break: break-all; }
 .itc-blog-title { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; line-height: 1.02; font-size: clamp(1.9rem, 5vw, 3.6rem); }
-.itc-dropcap::first-letter {
-  float: left; font-family: var(--font-display); font-weight: 800; font-size: 3.4em;
-  line-height: 0.85; padding: 0.08em 0.14em 0 0; color: var(--color-solar-400);
-}
+.itc-dropcap::first-letter { float: left; font-family: var(--font-display); font-weight: 800; font-size: 3.4em; line-height: 0.85; padding: 0.08em 0.14em 0 0; color: var(--color-solar-400); }

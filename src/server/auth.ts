@@ -65,12 +65,10 @@ function withLock<T>(fn: () => T | Promise<T>): Promise<T> {
   lockChain = next.catch(() => undefined);
   return next;
 }
-
 function findRule(taskType: TaskType, providerId: string | null, model: string | null): PricingRule {
   const rules = db.all<PricingRule>("pricing_rules").filter((r) => r.taskType === taskType || r.taskType === "*");
   const score = (r: PricingRule) =>
-    (r.providerId === providerId ? 4 : r.providerId === "*" ? 0 : -100) +
-    (r.model === model ? 2 : r.model === "*" ? 0 : -100);
+    (r.providerId === providerId ? 4 : r.providerId === "*" ? 0 : -100) + (r.model === model ? 2 : r.model === "*" ? 0 : -100);
   const ranked = rules.filter((r) => score(r) >= 0).sort((a, b) => score(b) - score(a));
   if (!ranked.length) throw new ApiError("NO_PRICING", `No pricing rule for ${taskType}.`, 500);
   return ranked[0];
